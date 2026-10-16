@@ -1,0 +1,20 @@
+[package]
+name = "silo-installer"
+version = "1.5.1"
+edition = "2024"
+description = "Dark, animated installer for Silo"
+license = "MIT"
+
+[dependencies]
+eframe = { version = "0.33", default-features = true }
+egui = "0.33"
+image = { version = "0.25", default-features = false, features = ["png"] }
+rfd = "0.17"
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
