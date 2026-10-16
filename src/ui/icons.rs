@@ -11,12 +11,13 @@ pub enum Icon {
     Keypad,
     Sliders,
     Help,
-    Refresh,
     Sun,
     Moon,
     Image,
     Package,
     ChevronRight,
+    Download,
+    Monitor,
 }
 
 /// Signed angular delta from `from` to `to` along the direction that
@@ -180,39 +181,6 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
                 color,
             );
         }
-        Icon::Refresh => {
-            let radius = r * 0.86;
-            let steps = 26;
-            let a_start = -1.15f32;
-            let a_end = 4.2f32;
-            let mut points = Vec::with_capacity(steps + 1);
-            for i in 0..=steps {
-                let a = a_start + (a_end - a_start) * i as f32 / steps as f32;
-                points.push(pos2(
-                    center.x + radius * a.cos(),
-                    center.y + radius * a.sin(),
-                ));
-            }
-            painter.add(egui::Shape::Path(egui::epaint::PathShape::line(points.clone(), stroke)));
-            // Arrowhead at the start of the arc.
-            if let Some(&tip) = points.first() {
-                let dir = a_start + std::f32::consts::FRAC_PI_2;
-                let wing = s * 0.17;
-                let p1 = pos2(
-                    tip.x + (dir).cos() * wing,
-                    tip.y + (dir).sin() * wing,
-                );
-                let p2 = pos2(
-                    tip.x + (a_start + std::f32::consts::PI).cos() * wing * 1.1,
-                    tip.y + (a_start + std::f32::consts::PI).sin() * wing * 1.1,
-                );
-                painter.add(egui::Shape::convex_polygon(
-                    vec![tip, p1, p2],
-                    color,
-                    egui::Stroke::NONE,
-                ));
-            }
-        }
         Icon::Sun => {
             painter.circle_filled(center, r * 0.46, color);
             for i in 0..8 {
@@ -298,6 +266,54 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
                 ],
                 egui::Stroke::new(stroke.width * 1.1, color),
             )));
+        }
+        Icon::Download => {
+            // Down arrow into a tray: the classic "get update" glyph.
+            let top = center.y - r * 0.95;
+            let tip = center.y + r * 0.28;
+            painter.line_segment(
+                [pos2(center.x, top), pos2(center.x, tip)],
+                stroke,
+            );
+            painter.add(egui::Shape::Path(egui::epaint::PathShape::line(
+                vec![
+                    pos2(center.x - r * 0.46, tip - r * 0.5),
+                    pos2(center.x, tip),
+                    pos2(center.x + r * 0.46, tip - r * 0.5),
+                ],
+                stroke,
+            )));
+            painter.add(egui::Shape::Path(egui::epaint::PathShape::line(
+                vec![
+                    pos2(center.x - r * 0.9, center.y + r * 0.35),
+                    pos2(center.x - r * 0.9, center.y + r * 0.92),
+                    pos2(center.x + r * 0.9, center.y + r * 0.92),
+                    pos2(center.x + r * 0.9, center.y + r * 0.35),
+                ],
+                egui::Stroke::new(stroke.width * 0.9, color),
+            )));
+        }
+        Icon::Monitor => {
+            // A display with a small stand, for the "follow system" theme.
+            let screen = Rect::from_center_size(
+                pos2(center.x, center.y - r * 0.18),
+                vec2(s * 0.84, s * 0.58),
+            );
+            painter.rect_stroke(screen, s * 0.08, stroke, egui::StrokeKind::Inside);
+            painter.line_segment(
+                [
+                    pos2(center.x, screen.max.y),
+                    pos2(center.x, screen.max.y + s * 0.16),
+                ],
+                egui::Stroke::new(stroke.width * 0.9, color),
+            );
+            painter.line_segment(
+                [
+                    pos2(center.x - s * 0.22, screen.max.y + s * 0.16),
+                    pos2(center.x + s * 0.22, screen.max.y + s * 0.16),
+                ],
+                egui::Stroke::new(stroke.width * 0.9, color),
+            );
         }
     }
 }

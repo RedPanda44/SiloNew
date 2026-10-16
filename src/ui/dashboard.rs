@@ -98,11 +98,11 @@ impl SiloApp {
                 ui.columns(2, |actions| {
                     if quick_action_tile(
                         &mut actions[0],
-                        Icon::Refresh,
-                        language.text("Refresh devices"),
+                        Icon::Download,
+                        language.text("Check for updates"),
                         tile_w,
                     ) {
-                        self.refresh_devices();
+                        self.current_tab = AppTab::Updates;
                     }
                     if quick_action_tile(
                         &mut actions[1],

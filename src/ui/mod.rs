@@ -7,6 +7,7 @@ pub mod icons;
 pub mod passcode;
 pub mod settings;
 pub mod theme;
+pub mod updates;
 pub mod wallet;
 pub mod widgets;
 
@@ -17,4 +18,5 @@ pub enum AppTab {
     Passcode,
     Settings,
     Help,
+    Updates,
 }

@@ -5,6 +5,13 @@
 
 ---
 
+## What's New in 1.5.2
+- 🔄 **Built-in updater:** Silo now checks for new releases on its own and can download and install them in place — no need to re-run the installer. Check manually from the new **Updates** tab or let it check on launch.
+- 🌗 **System theme:** the appearance setting now offers **System** (follows your Windows light/dark setting, and updates live), alongside Light and Dark.
+- 🔌 **Automatic device detection:** Silo now refreshes itself the moment an iPhone connects or disconnects — the manual refresh buttons are gone.
+- 🎛️ **Refreshed sidebar:** macOS System Settings-style navigation with colored icon chips, plus an accent badge on the Updates tab when a new version is available.
+- 🐛 Plus assorted internal cleanups. No changes to your saved cards, themes or backups.
+
 ## What's New in 1.5.1
 - 🩹 **Safer restores:** *Restore Original* now resolves the exact on-device card folder (padded/unpadded hash variant) before writing, so it always lands on the correct card instead of a stray folder.
 - 🧹 **Cleaner transport shutdown:** the AirTraffic sync worker now cancels promptly when the host timeout is reached, releasing the device connection instead of leaving a stalled session behind.

@@ -13,6 +13,7 @@ mod passthm;
 mod paths;
 mod scanner;
 mod ui;
+mod updater;
 mod wallet_backup;
 
 /// Decode the bundled logo for the window title bar / taskbar icon.
@@ -30,6 +31,35 @@ fn window_icon() -> Option<std::sync::Arc<egui::IconData>> {
 }
 
 fn main() -> eframe::Result<()> {
+    // Detached helper mode: replace the old executable and relaunch it. This
+    // runs from the freshly downloaded build, so no window is shown.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some(updater::APPLY_UPDATE_FLAG) {
+        let target = args.get(2).cloned().unwrap_or_default();
+        let source = args.get(3).cloned().unwrap_or_default();
+        let code = updater::run_apply_update(
+            std::path::Path::new(&target),
+            std::path::Path::new(&source),
+        );
+        std::process::exit(code);
+    }
+    // Hidden diagnostic: `silo.exe --silo-check-update [version]` prints the
+    // result of a release check to stdout (only visible in debug builds, which
+    // keep a console) and exits. An optional version overrides the built-in one
+    // so older builds can be simulated.
+    if args.get(1).map(String::as_str) == Some("--silo-check-update") {
+        let current = args.get(2).map(String::as_str).unwrap_or(app::APP_VERSION);
+        match updater::check_for_update(current) {
+            Ok(Some(info)) => println!(
+                "update available: {} -> {} ({})",
+                current, info.version, info.tag
+            ),
+            Ok(None) => println!("up to date ({})", current),
+            Err(e) => println!("check failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
     let app_title = format!("Silo v{}", app::APP_VERSION);
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1180.0, 800.0])

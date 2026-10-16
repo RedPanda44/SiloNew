@@ -217,7 +217,8 @@ pub fn button(
     response
 }
 
-/// Icon-only capsule button (used in the header for refresh / theme).
+/// Icon-only capsule button (kept for future header controls).
+#[allow(dead_code)]
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon) -> egui::Response {
     let p = pal(ui);
     let size = 30.0;
@@ -432,12 +433,16 @@ fn strip_leading_number(text: &str) -> &str {
 // Sidebar navigation
 // ---------------------------------------------------------------------------
 
-pub fn nav_item(
+/// macOS System Settings-style sidebar row: a colored rounded icon chip, the
+/// label, and an optional accent dot on the right (for "something new").
+pub fn nav_item_chip(
     ui: &mut egui::Ui,
     current: &mut AppTab,
     target: AppTab,
     label: &str,
     icon: Icon,
+    chip: Color32,
+    badge: bool,
 ) {
     let p = pal(ui);
     let selected = *current == target;
@@ -445,7 +450,7 @@ pub fn nav_item(
         .ctx()
         .animate_bool_responsive(ui.make_persistent_id(("nav", label)), selected);
 
-    let height = 34.0;
+    let height = 36.0;
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
 
@@ -469,23 +474,33 @@ pub fn nav_item(
         painter.rect_filled(rect, radius, fill);
     }
 
-    let icon_color = theme::mix(p.text_secondary, p.accent, t);
+    // Colored icon chip (like the Settings icons in macOS).
+    let chip_rect = Rect::from_center_size(
+        Pos2::new(rect.min.x + 21.0, rect.center().y),
+        vec2(24.0, 24.0),
+    );
+    painter.rect_filled(chip_rect, egui::CornerRadius::same(7), chip);
     icons::draw(
         ui,
         icon,
-        Rect::from_min_size(
-            Pos2::new(rect.min.x + 10.0, rect.center().y - 8.0),
-            vec2(16.0, 16.0),
-        ),
-        icon_color,
+        Rect::from_center_size(chip_rect.center(), vec2(15.0, 15.0)),
+        Color32::WHITE,
     );
     painter.text(
-        Pos2::new(rect.min.x + 36.0, rect.center().y),
+        Pos2::new(rect.min.x + 42.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(13.0),
         theme::mix(p.text_secondary, p.text, t.max(if selected { 1.0 } else { 0.0 })),
     );
+
+    if badge {
+        painter.circle_filled(
+            Pos2::new(rect.max.x - 14.0, rect.center().y),
+            3.5,
+            p.accent,
+        );
+    }
 
     if response.clicked() {
         *current = target;

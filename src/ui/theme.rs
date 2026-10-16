@@ -15,27 +15,108 @@ pub fn strong() -> egui::FontFamily {
 /// User-facing appearance selection, persisted in settings.json.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Appearance {
-    Dark,
+    /// Follow the Windows app theme.
+    System,
     Light,
+    Dark,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self::Dark
+        Self::System
     }
 }
 
 impl Appearance {
-    pub fn is_dark(self) -> bool {
-        matches!(self, Self::Dark)
-    }
+    /// Order used by the segmented control and the header cycle.
+    pub const ALL: [Appearance; 3] = [Appearance::System, Appearance::Light, Appearance::Dark];
 
-    pub fn toggle(self) -> Self {
+    pub fn index(self) -> usize {
         match self {
-            Self::Dark => Self::Light,
-            Self::Light => Self::Dark,
+            Self::System => 0,
+            Self::Light => 1,
+            Self::Dark => 2,
         }
     }
+
+    pub fn from_index(index: usize) -> Self {
+        match index {
+            1 => Self::Light,
+            2 => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
+    /// Translation key / display label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    /// Whether the theme resolved for this preference is dark right now.
+    pub fn is_dark(self) -> bool {
+        match self {
+            Self::Dark => true,
+            Self::Light => false,
+            Self::System => system_prefers_dark(),
+        }
+    }
+
+    /// Cycle System -> Light -> Dark -> System (used by the header toggle).
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+}
+
+/// Whether Windows is currently set to the dark app theme.
+/// Reads `AppsUseLightTheme` from the user's Personalize settings.
+#[cfg(windows)]
+pub fn system_prefers_dark() -> bool {
+    const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as isize;
+    const RRF_RT_REG_DWORD: u32 = 0x0000_0010;
+    unsafe extern "system" {
+        fn RegGetValueW(
+            hkey: isize,
+            lpsubkey: *const u16,
+            lpvalue: *const u16,
+            dwflags: u32,
+            pdwtype: *mut u32,
+            pvdata: *mut core::ffi::c_void,
+            pcbdata: *mut u32,
+        ) -> i32;
+    }
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+    let subkey = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let value = wide("AppsUseLightTheme");
+    // Defaults to 1 (light) when the value is absent.
+    let mut data: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut data as *mut u32).cast(),
+            &mut size,
+        )
+    };
+    status == 0 && data == 0
+}
+
+#[cfg(not(windows))]
+pub fn system_prefers_dark() -> bool {
+    false
 }
 
 /// Every color the UI needs, resolved once per appearance.
@@ -60,9 +141,10 @@ pub struct Palette {
 
 impl Palette {
     pub fn of(appearance: Appearance) -> Self {
-        match appearance {
-            Appearance::Dark => Self::dark(),
-            Appearance::Light => Self::light(),
+        if appearance.is_dark() {
+            Self::dark()
+        } else {
+            Self::light()
         }
     }
 
@@ -202,7 +284,7 @@ pub fn apply_theme(ctx: &egui::Context, appearance: Appearance) {
     let p = Palette::of(appearance);
     ctx.data_mut(|data| data.insert_temp(palette_id(), p));
 
-    let mut visuals = if appearance.is_dark() {
+    let mut visuals = if p.dark {
         egui::Visuals::dark()
     } else {
         egui::Visuals::light()
@@ -379,9 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn appearance_toggles_between_dark_and_light() {
-        assert_eq!(Appearance::Dark.toggle(), Appearance::Light);
-        assert_eq!(Appearance::Light.toggle(), Appearance::Dark);
+    fn appearance_cycles_through_all_three() {
+        assert_eq!(Appearance::System.cycle(), Appearance::Light);
+        assert_eq!(Appearance::Light.cycle(), Appearance::Dark);
+        assert_eq!(Appearance::Dark.cycle(), Appearance::System);
+        assert_eq!(Appearance::from_index(0), Appearance::System);
+        assert_eq!(Appearance::from_index(1), Appearance::Light);
+        assert_eq!(Appearance::from_index(2), Appearance::Dark);
     }
 
     #[test]

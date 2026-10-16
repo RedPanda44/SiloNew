@@ -323,6 +323,30 @@ impl Language {
             "- Lock screen to verify your updated keypad artwork" => {
                 "- 锁定屏幕以查看更新后的键盘图片"
             }
+            "Updates" => "更新",
+            "Silo Updater" => "Silo 更新",
+            "Current version" => "当前版本",
+            "Check for a newer version of Silo." => "检查是否有更新版本的 Silo。",
+            "Check for updates" => "检查更新",
+            "Checking for updates..." => "正在检查更新...",
+            "You are running the latest version." => "你正在使用最新版本。",
+            "Check again" => "再次检查",
+            "A new version is available." => "有新版本可用。",
+            "This release has no Windows download." => "此版本没有提供 Windows 下载。",
+            "Download & install" => "下载并安装",
+            "View release notes" => "查看更新说明",
+            "Release notes" => "更新说明",
+            "Downloading update..." => "正在下载更新...",
+            "The update is ready to install." => "更新已准备好安装。",
+            "Silo will close, apply the update, and reopen automatically." => {
+                "Silo 将自动关闭、应用更新并重新打开。"
+            }
+            "Restart & install" => "重启并安装",
+            "Update check failed." => "检查更新失败。",
+            "Try again" => "重试",
+            "System" => "跟随系统",
+            "System follows the Windows theme." => "“跟随系统”将使用 Windows 的主题设置。",
+            "Devices are detected automatically." => "设备会自动检测。",
             _ => source,
         }
     }

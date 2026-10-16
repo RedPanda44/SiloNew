@@ -5,7 +5,7 @@ use eframe::egui;
 use crate::app::SiloApp;
 use crate::i18n::Language;
 use crate::ui::theme::{self, Appearance};
-use crate::ui::widgets::{self, ButtonKind};
+use crate::ui::widgets;
 
 impl SiloApp {
     pub(crate) fn show_settings(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
@@ -19,25 +19,20 @@ impl SiloApp {
                 ui.add_space(2.0);
                 widgets::caption(ui, language.text("Choose how Silo looks on this PC."));
                 ui.add_space(12.0);
-                let selected = if self.appearance.is_dark() { 1 } else { 0 };
-                let options = [
-                    language.text("Light"),
-                    language.text("Dark"),
-                ];
+                let selected = self.appearance.index();
+                let options: Vec<&str> = Appearance::ALL
+                    .iter()
+                    .map(|appearance| language.text(appearance.label()))
+                    .collect();
                 if let Some(idx) =
                     widgets::segmented(ui, &options, selected, ui.id().with("appearance"))
                 {
-                    let next = if idx == 0 {
-                        Appearance::Light
-                    } else {
-                        Appearance::Dark
-                    };
-                    self.set_appearance(next, ctx);
+                    self.set_appearance(Appearance::from_index(idx), ctx);
                 }
                 ui.add_space(8.0);
                 widgets::caption(
                     ui,
-                    language.text("Theme preference is saved on this PC."),
+                    language.text("System follows the Windows theme."),
                 );
 
                 ui.add_space(16.0);
@@ -134,17 +129,10 @@ impl SiloApp {
                     );
                 }
                 ui.add_space(10.0);
-                if widgets::button(
+                widgets::caption(
                     ui,
-                    language.text("Refresh devices"),
-                    ButtonKind::Secondary,
-                    true,
-                    false,
-                )
-                .clicked()
-                {
-                    self.refresh_devices();
-                }
+                    language.text("Devices are detected automatically."),
+                );
             });
         });
     }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use image::DynamicImage;
@@ -18,6 +18,7 @@ use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
 use crate::ui::theme::{self, Appearance};
 use crate::ui::{AppTab, icons, widgets};
 use crate::ui::widgets::ButtonKind;
+use crate::updater::{self, ReleaseInfo};
 use crate::wallet_backup::{backup_exists, load_current_card_artwork};
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -38,6 +39,25 @@ pub(crate) enum BackgroundTaskMessage {
         result: Result<Vec<u8>, String>,
     },
     Done(Result<String, String>),
+}
+
+/// What the Updates tab is currently showing.
+#[derive(Clone)]
+pub(crate) enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available(ReleaseInfo),
+    Downloading { done: u64, total: u64 },
+    Ready(PathBuf),
+    Error(String),
+}
+
+/// Messages sent from the background update worker to the UI thread.
+enum UpdateEvent {
+    Checked(Result<Option<ReleaseInfo>, String>),
+    Progress(u64, u64),
+    Downloaded(Result<PathBuf, String>),
 }
 
 #[cfg(windows)]
@@ -115,6 +135,18 @@ fn primary_work_area_points(_ctx: &egui::Context) -> Option<egui::Vec2> {
     None
 }
 
+/// Whether the connected-device set differs in any way that matters to the UI.
+fn devices_differ(current: &[DeviceInfo], incoming: &[DeviceInfo]) -> bool {
+    if current.len() != incoming.len() {
+        return true;
+    }
+    current.iter().zip(incoming).any(|(a, b)| {
+        !a.udid.eq_ignore_ascii_case(&b.udid)
+            || a.name != b.name
+            || a.transport_summary() != b.transport_summary()
+    })
+}
+
 pub struct SiloApp {
     pub(crate) current_tab: AppTab,
     pub(crate) displayed_tab: AppTab,
@@ -167,6 +199,15 @@ pub struct SiloApp {
     pub(crate) artwork_rx: Receiver<BackgroundTaskMessage>,
     pub(crate) logs: Vec<String>,
     pub(crate) show_logs_window: bool,
+
+    // Self-updater
+    pub(crate) update_state: UpdateState,
+    update_rx: Option<Receiver<UpdateEvent>>,
+    update_silent: bool,
+
+    // Automatic device detection
+    device_rx: Receiver<Vec<DeviceInfo>>,
+    last_theme_sync: Option<Instant>,
 }
 
 impl SiloApp {
@@ -182,6 +223,23 @@ impl SiloApp {
 
         let language = settings.language;
         let (artwork_tx, artwork_rx) = channel();
+
+        // Background device poller: keeps the device list current so an iPhone
+        // is picked up (and dropped) automatically, with no manual refresh.
+        let (device_tx, device_rx) = channel();
+        {
+            let poll_ctx = cc.egui_ctx.clone();
+            thread::spawn(move || loop {
+                if let Ok(devices) = list_connected_devices() {
+                    if device_tx.send(devices).is_err() {
+                        break;
+                    }
+                    poll_ctx.request_repaint();
+                }
+                thread::sleep(Duration::from_millis(1500));
+            });
+        }
+
         let mut app = Self {
             current_tab: AppTab::Dashboard,
             displayed_tab: AppTab::Dashboard,
@@ -232,6 +290,13 @@ impl SiloApp {
             artwork_rx,
             logs: Vec::new(),
             show_logs_window: false,
+
+            update_state: UpdateState::Idle,
+            update_rx: None,
+            update_silent: false,
+
+            device_rx,
+            last_theme_sync: None,
         };
 
         app.add_log(format!("Silo Windows v{} initialized", APP_VERSION));
@@ -251,6 +316,11 @@ impl SiloApp {
         if app.apple_ready {
             app.refresh_devices();
         }
+
+        // Clear any leftover downloaded build, then quietly look for a newer
+        // release in the background (the Updates tab reflects the result).
+        updater::cleanup_updates();
+        app.check_for_updates(true);
 
         app
     }
@@ -278,16 +348,122 @@ impl SiloApp {
         self.appearance = appearance;
         theme::apply_theme(ctx, appearance);
         self.persist_settings();
-        self.add_log(format!(
-            "Appearance changed to {}.",
-            if appearance.is_dark() { "Dark" } else { "Light" }
-        ));
+        self.add_log(format!("Appearance changed to {}.", appearance.label()));
         self.status_msg = format!(
             "{}: {}",
             self.language.text("Appearance"),
-            self.language
-                .text(if appearance.is_dark() { "Dark" } else { "Light" })
+            self.language.text(appearance.label())
         );
+    }
+
+    /// Kick off a background release check. When `silent`, errors are swallowed
+    /// (used for the quiet check on launch).
+    pub(crate) fn check_for_updates(&mut self, silent: bool) {
+        if self.update_rx.is_some() {
+            return;
+        }
+        self.update_silent = silent;
+        if !silent {
+            self.update_state = UpdateState::Checking;
+        }
+        let (tx, rx) = channel();
+        self.update_rx = Some(rx);
+        let current = APP_VERSION.to_string();
+        thread::spawn(move || {
+            let result = updater::check_for_update(&current).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(UpdateEvent::Checked(result));
+        });
+    }
+
+    /// Start downloading the given release on a background thread.
+    pub(crate) fn download_update(&mut self, info: ReleaseInfo) {
+        if self.update_rx.is_some() {
+            return;
+        }
+        self.update_state = UpdateState::Downloading {
+            done: 0,
+            total: info.download_size,
+        };
+        let (tx, rx) = channel();
+        self.update_rx = Some(rx);
+        thread::spawn(move || {
+            let result = updater::download_update(&info, |done, total| {
+                let _ = tx.send(UpdateEvent::Progress(done, total));
+            })
+            .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(UpdateEvent::Downloaded(result));
+        });
+    }
+
+    /// Swap the downloaded build over the running executable and restart.
+    /// The window is closed so the file lock is released; the detached helper
+    /// does the actual replacement.
+    pub(crate) fn apply_update(&mut self, ctx: &egui::Context) {
+        let UpdateState::Ready(path) = &self.update_state else {
+            return;
+        };
+        let target = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                self.update_state =
+                    UpdateState::Error(format!("Could not locate the running app: {error}"));
+                return;
+            }
+        };
+        match updater::launch_apply_update(path, &target) {
+            Ok(()) => {
+                self.add_log("Applying update; restarting Silo...");
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(error) => self.update_state = UpdateState::Error(format!("{error:#}")),
+        }
+    }
+
+    fn handle_update_messages(&mut self) {
+        let mut events = Vec::new();
+        if let Some(ref rx) = self.update_rx {
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+        }
+        for event in events {
+            match event {
+                UpdateEvent::Checked(Ok(Some(info))) => {
+                    self.update_state = UpdateState::Available(info);
+                    self.update_rx = None;
+                    self.update_silent = false;
+                }
+                UpdateEvent::Checked(Ok(None)) => {
+                    self.update_state = if self.update_silent {
+                        UpdateState::Idle
+                    } else {
+                        UpdateState::UpToDate
+                    };
+                    self.update_rx = None;
+                    self.update_silent = false;
+                }
+                UpdateEvent::Checked(Err(error)) => {
+                    self.update_state = if self.update_silent {
+                        UpdateState::Idle
+                    } else {
+                        UpdateState::Error(error)
+                    };
+                    self.update_rx = None;
+                    self.update_silent = false;
+                }
+                UpdateEvent::Progress(done, total) => {
+                    self.update_state = UpdateState::Downloading { done, total };
+                }
+                UpdateEvent::Downloaded(Ok(path)) => {
+                    self.update_state = UpdateState::Ready(path);
+                    self.update_rx = None;
+                }
+                UpdateEvent::Downloaded(Err(error)) => {
+                    self.update_state = UpdateState::Error(error);
+                    self.update_rx = None;
+                }
+            }
+        }
     }
 
     pub(crate) fn refresh_devices(&mut self) {
@@ -337,6 +513,95 @@ impl SiloApp {
                     err
                 );
             }
+        }
+    }
+
+    /// Drain the background device poller and apply any change quietly.
+    fn poll_devices(&mut self) {
+        let mut latest = None;
+        while let Ok(devices) = self.device_rx.try_recv() {
+            latest = Some(devices);
+        }
+        if let Some(devices) = latest {
+            self.apply_devices(devices);
+        }
+    }
+
+    /// Update the device list from an automatic scan, logging only when the
+    /// set of connected devices actually changes.
+    fn apply_devices(&mut self, devices: Vec<DeviceInfo>) {
+        if !devices_differ(&self.devices, &devices) {
+            return;
+        }
+        let previous: Vec<String> = self.devices.iter().map(|d| d.udid.clone()).collect();
+        self.devices = devices;
+
+        let selection_still_exists = self.selected_udid.as_ref().is_some_and(|selected| {
+            self.devices
+                .iter()
+                .any(|device| device.udid.eq_ignore_ascii_case(selected))
+        });
+        if !selection_still_exists {
+            self.selected_udid = self.devices.first().map(|device| device.udid.clone());
+        }
+
+        // Change-driven logging: the manual refresh used to log every scan,
+        // but automatic polling must stay quiet.
+        let mut messages: Vec<String> = Vec::new();
+        for device in &self.devices {
+            if !previous
+                .iter()
+                .any(|udid| udid.eq_ignore_ascii_case(&device.udid))
+            {
+                messages.push(format!(
+                    "iPhone connected: {} ({})",
+                    device.name,
+                    device.transport_summary()
+                ));
+            }
+        }
+        for udid in &previous {
+            if !self
+                .devices
+                .iter()
+                .any(|device| device.udid.eq_ignore_ascii_case(udid))
+            {
+                messages.push("iPhone disconnected.".to_string());
+            }
+        }
+        for message in messages {
+            self.add_log(message);
+        }
+
+        if self.devices.is_empty() {
+            self.status_msg = self
+                .language
+                .text("No iPhone connected via USB or paired WiFi.")
+                .to_string();
+        } else {
+            self.status_msg = format!(
+                "{} {} {}",
+                self.language.text("Found"),
+                self.devices.len(),
+                self.language.text("connected device(s); transport mode:")
+            );
+        }
+    }
+
+    /// When following the system theme, re-apply it if Windows flips.
+    fn sync_system_theme(&mut self, ctx: &egui::Context) {
+        if self.appearance != Appearance::System {
+            return;
+        }
+        let due = self
+            .last_theme_sync
+            .is_none_or(|last| last.elapsed() >= Duration::from_millis(1500));
+        if !due {
+            return;
+        }
+        self.last_theme_sync = Some(Instant::now());
+        if theme::palette(ctx).dark != self.appearance.is_dark() {
+            theme::apply_theme(ctx, self.appearance);
         }
     }
 
@@ -1164,26 +1429,32 @@ impl SiloApp {
                             .color(p.text_tertiary),
                     );
                     ui.add_space(8.0);
-                    widgets::nav_item(
+                    widgets::nav_item_chip(
                         ui,
                         &mut self.current_tab,
                         AppTab::Dashboard,
                         language.text("Dashboard"),
                         icons::Icon::Home,
+                        p.accent,
+                        false,
                     );
-                    widgets::nav_item(
+                    widgets::nav_item_chip(
                         ui,
                         &mut self.current_tab,
                         AppTab::Wallet,
                         language.text("Wallet"),
                         icons::Icon::Card,
+                        egui::Color32::from_rgb(52, 199, 89),
+                        false,
                     );
-                    widgets::nav_item(
+                    widgets::nav_item_chip(
                         ui,
                         &mut self.current_tab,
                         AppTab::Passcode,
                         language.text("Passcode"),
                         icons::Icon::Keypad,
+                        egui::Color32::from_rgb(175, 82, 222),
+                        false,
                     );
                     ui.add_space(18.0);
                     ui.label(
@@ -1193,19 +1464,32 @@ impl SiloApp {
                             .color(p.text_tertiary),
                     );
                     ui.add_space(8.0);
-                    widgets::nav_item(
+                    widgets::nav_item_chip(
                         ui,
                         &mut self.current_tab,
                         AppTab::Settings,
                         language.text("Settings"),
                         icons::Icon::Sliders,
+                        egui::Color32::from_rgb(142, 142, 147),
+                        false,
                     );
-                    widgets::nav_item(
+                    widgets::nav_item_chip(
                         ui,
                         &mut self.current_tab,
                         AppTab::Help,
                         language.text("Help"),
                         icons::Icon::Help,
+                        egui::Color32::from_rgb(50, 173, 230),
+                        false,
+                    );
+                    widgets::nav_item_chip(
+                        ui,
+                        &mut self.current_tab,
+                        AppTab::Updates,
+                        language.text("Updates"),
+                        icons::Icon::Download,
+                        egui::Color32::from_rgb(255, 149, 0),
+                        matches!(self.update_state, UpdateState::Available(_)),
                     );
 
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -1271,6 +1555,7 @@ impl SiloApp {
                                 AppTab::Passcode => language.text("Passcode Studio"),
                                 AppTab::Settings => language.text("Settings"),
                                 AppTab::Help => language.text("Help & Guides"),
+                                AppTab::Updates => language.text("Updates"),
                             })
                             .family(theme::strong())
                             .size(22.0)
@@ -1284,19 +1569,18 @@ impl SiloApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Light / dark toggle with a morph pop on switch.
-                        let theme_icon =
-                            if self.appearance.is_dark() { icons::Icon::Sun } else { icons::Icon::Moon };
+                        // Appearance cycle: System -> Light -> Dark -> System.
+                        let theme_icon = match self.appearance {
+                            Appearance::System => icons::Icon::Monitor,
+                            Appearance::Light => icons::Icon::Sun,
+                            Appearance::Dark => icons::Icon::Moon,
+                        };
                         if widgets::theme_toggle_button(ui, theme_icon, self.appearance.is_dark())
+                            .on_hover_text(language.text(self.appearance.label()))
                             .clicked()
                         {
-                            let next = self.appearance.toggle();
+                            let next = self.appearance.cycle();
                             self.set_appearance(next, ctx);
-                        }
-
-                        ui.add_space(8.0);
-                        if widgets::icon_button(ui, icons::Icon::Refresh).clicked() {
-                            self.refresh_devices();
                         }
 
                         let controls_enabled = !self.is_busy && !self.scanning_syslog;
@@ -1520,9 +1804,13 @@ impl SiloApp {
 impl eframe::App for SiloApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_messages(ctx);
+        self.handle_update_messages();
+        self.poll_devices();
+        self.sync_system_theme(ctx);
         let animation_time = ctx.input(|input| input.time);
 
-        if self.is_busy || self.scanning_syslog || self.current_card_loading {
+        if self.is_busy || self.scanning_syslog || self.current_card_loading || self.update_rx.is_some()
+        {
             ctx.request_repaint();
         }
 
@@ -1597,6 +1885,7 @@ impl eframe::App for SiloApp {
                             AppTab::Passcode => self.show_passcode_tab(ctx, ui),
                             AppTab::Settings => self.show_settings(ctx, ui),
                             AppTab::Help => self.show_help_tab(ui),
+                            AppTab::Updates => self.show_updates(ctx, ui),
                         }
                     });
             });
