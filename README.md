@@ -5,6 +5,13 @@
 
 ---
 
+## What's New in 1.5.3
+- 🎨 **Complete UI overhaul ("Aurora"):** navigation moved from the left sidebar to a **top command bar** with gradient nav pills; every screen rebuilt on new glass cards, larger corner radii and softer shadows.
+- 🌈 **New color system:** a vivid indigo→blue accent pair drives gradient hero panels, gradient primary buttons, metric tiles and quick-action tiles.
+- 🧭 **Restyled shell:** a gradient accent bar and larger page titles, plus a refreshed status bar.
+- 🔧 **Refined controls:** segmented controls and toggle switches now follow the theme palette.
+- 🐛 No changes to your saved cards, themes or backups.
+
 ## What's New in 1.5.2
 - 🔄 **Built-in updater:** Silo now checks for new releases on its own and can download and install them in place — no need to re-run the installer. Check manually from the new **Updates** tab or let it check on launch.
 - 🌗 **System theme:** the appearance setting now offers **System** (follows your Windows light/dark setting, and updates live), alongside Light and Dark.

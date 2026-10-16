@@ -1339,197 +1339,152 @@ impl SiloApp {
         }
     }
 
-    fn sidebar(&mut self, ctx: &egui::Context) {
+    /// Top command bar: brand mark, horizontal navigation pills and the
+    /// appearance toggle. Replaces the old left sidebar entirely.
+    fn nav_bar(&mut self, ctx: &egui::Context) {
         let language = self.language;
         let p = theme::palette(ctx);
 
-        egui::SidePanel::left("navigation")
-            .exact_width(214.0)
+        egui::TopBottomPanel::top("app_nav")
             .frame(
                 egui::Frame::new()
                     .fill(p.sidebar)
-                    .inner_margin(egui::Margin::symmetric(14, 16)),
+                    .inner_margin(egui::Margin::symmetric(18, 10)),
             )
             .show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    // Brand badge.
-                    ui.horizontal(|ui| {
-                        let badge = egui::vec2(36.0, 36.0);
-                        let (rect, _) =
-                            ui.allocate_exact_size(badge, egui::Sense::hover());
-                        let painter = ui.painter_at(rect);
-                        theme::gradient_rounded(
-                            &painter,
-                            rect,
-                            9.0,
-                            egui::Color32::from_rgb(46, 46, 48),
-                            egui::Color32::from_rgb(9, 9, 10),
-                        );
-                        // Wallet mark matching the app icon: a tilted pass
-                        // peeking behind a solid pass with a black stripe.
-                        let c = rect.center();
-                        let angle: f32 = -12f32.to_radians();
-                        let (s, co) = angle.sin_cos();
-                        let half = egui::vec2(8.7, 6.3);
-                        let back_center = c + egui::vec2(0.0, -1.0);
-                        let back: Vec<egui::Pos2> = [
-                            egui::vec2(-half.x, -half.y),
-                            egui::vec2(half.x, -half.y),
-                            egui::vec2(half.x, half.y),
-                            egui::vec2(-half.x, half.y),
-                        ]
-                        .iter()
-                        .map(|pt| {
-                            egui::pos2(
-                                back_center.x + pt.x * co - pt.y * s,
-                                back_center.y + pt.x * s + pt.y * co,
-                            )
-                        })
-                        .collect();
-                        painter.add(egui::Shape::Path(egui::epaint::PathShape {
-                            points: back,
-                            closed: true,
-                            fill: egui::Color32::from_white_alpha(125),
-                            stroke: egui::Stroke::NONE.into(),
-                        }));
-                        let front = egui::Rect::from_center_size(
-                            c + egui::vec2(0.0, 1.0),
-                            egui::vec2(19.0, 13.5),
-                        );
-                        painter.rect_filled(front, 3.0, egui::Color32::WHITE);
-                        painter.rect_filled(
-                            egui::Rect::from_min_max(
-                                egui::pos2(front.min.x, front.min.y + 3.9),
-                                egui::pos2(front.max.x, front.min.y + 8.1),
-                            ),
-                            0.0,
-                            egui::Color32::from_rgb(26, 26, 28),
-                        );
-                        ui.add_space(10.0);
-                        ui.vertical(|ui| {
-                            ui.label(
-                                egui::RichText::new("Silo")
-                                    .family(theme::strong())
-                                    .size(17.0)
-                                    .color(p.text),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!("v{}", APP_VERSION))
-                                    .size(10.0)
-                                    .color(p.text_tertiary),
-                            );
-                        });
-                    });
-                    ui.add_space(24.0);
-
-                    ui.label(
-                        egui::RichText::new(language.text("WORKSPACE"))
-                            .family(theme::strong())
-                            .size(10.0)
-                            .color(p.text_tertiary),
+                ui.horizontal(|ui| {
+                    // Brand mark: gradient tile + wordmark.
+                    let badge = egui::vec2(34.0, 34.0);
+                    let (rect, _) = ui.allocate_exact_size(badge, egui::Sense::hover());
+                    let painter = ui.painter_at(rect);
+                    theme::gradient_rounded(
+                        &painter,
+                        rect,
+                        10.0,
+                        p.accent_top(),
+                        p.accent_bottom(),
                     );
-                    ui.add_space(8.0);
-                    widgets::nav_item_chip(
+                    let c = rect.center();
+                    let angle: f32 = -12f32.to_radians();
+                    let (s, co) = angle.sin_cos();
+                    let half = egui::vec2(8.4, 6.0);
+                    let back_center = c + egui::vec2(0.0, -1.0);
+                    let back: Vec<egui::Pos2> = [
+                        egui::vec2(-half.x, -half.y),
+                        egui::vec2(half.x, -half.y),
+                        egui::vec2(half.x, half.y),
+                        egui::vec2(-half.x, half.y),
+                    ]
+                    .iter()
+                    .map(|pt| {
+                        egui::pos2(
+                            back_center.x + pt.x * co - pt.y * s,
+                            back_center.y + pt.x * s + pt.y * co,
+                        )
+                    })
+                    .collect();
+                    painter.add(egui::Shape::Path(egui::epaint::PathShape {
+                        points: back,
+                        closed: true,
+                        fill: egui::Color32::from_white_alpha(120),
+                        stroke: egui::Stroke::NONE.into(),
+                    }));
+                    let front = egui::Rect::from_center_size(
+                        c + egui::vec2(0.0, 1.0),
+                        egui::vec2(18.0, 12.6),
+                    );
+                    painter.rect_filled(front, 3.0, egui::Color32::WHITE);
+                    painter.rect_filled(
+                        egui::Rect::from_min_max(
+                            egui::pos2(front.min.x, front.min.y + 3.7),
+                            egui::pos2(front.max.x, front.min.y + 7.7),
+                        ),
+                        0.0,
+                        egui::Color32::from_rgb(26, 26, 28),
+                    );
+
+                    ui.add_space(10.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(1.0);
+                        ui.label(
+                            egui::RichText::new("Silo")
+                                .family(theme::strong())
+                                .size(16.0)
+                                .color(p.text),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("v{}", APP_VERSION))
+                                .size(9.5)
+                                .color(p.text_tertiary),
+                        );
+                    });
+
+                    ui.add_space(22.0);
+
+                    // Navigation pills.
+                    widgets::nav_tab(
                         ui,
                         &mut self.current_tab,
                         AppTab::Dashboard,
                         language.text("Dashboard"),
                         icons::Icon::Home,
-                        p.accent,
                         false,
                     );
-                    widgets::nav_item_chip(
+                    widgets::nav_tab(
                         ui,
                         &mut self.current_tab,
                         AppTab::Wallet,
                         language.text("Wallet"),
                         icons::Icon::Card,
-                        egui::Color32::from_rgb(52, 199, 89),
                         false,
                     );
-                    widgets::nav_item_chip(
+                    widgets::nav_tab(
                         ui,
                         &mut self.current_tab,
                         AppTab::Passcode,
                         language.text("Passcode"),
                         icons::Icon::Keypad,
-                        egui::Color32::from_rgb(175, 82, 222),
                         false,
                     );
-                    ui.add_space(18.0);
-                    ui.label(
-                        egui::RichText::new(language.text("SUPPORT"))
-                            .family(theme::strong())
-                            .size(10.0)
-                            .color(p.text_tertiary),
-                    );
-                    ui.add_space(8.0);
-                    widgets::nav_item_chip(
+                    widgets::nav_tab(
                         ui,
                         &mut self.current_tab,
                         AppTab::Settings,
                         language.text("Settings"),
                         icons::Icon::Sliders,
-                        egui::Color32::from_rgb(142, 142, 147),
                         false,
                     );
-                    widgets::nav_item_chip(
+                    widgets::nav_tab(
                         ui,
                         &mut self.current_tab,
                         AppTab::Help,
                         language.text("Help"),
                         icons::Icon::Help,
-                        egui::Color32::from_rgb(50, 173, 230),
                         false,
                     );
-                    widgets::nav_item_chip(
+                    widgets::nav_tab(
                         ui,
                         &mut self.current_tab,
                         AppTab::Updates,
                         language.text("Updates"),
                         icons::Icon::Download,
-                        egui::Color32::from_rgb(255, 149, 0),
                         matches!(self.update_state, UpdateState::Available(_)),
                     );
 
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                        ui.add_space(10.0);
-                        egui::Frame::new()
-                            .fill(p.card)
-                            .corner_radius(14)
-                            .inner_margin(egui::Margin::same(12))
-                            .show(ui, |ui| {
-                                let connected = self.selected_transport_available();
-                                ui.horizontal(|ui| {
-                                    let dot = if connected { p.success } else { p.error };
-                                    if connected {
-                                        icons::status_dot_pulsing(ui, dot);
-                                    } else {
-                                        icons::status_dot(ui, dot);
-                                    }
-                                    ui.label(
-                                        egui::RichText::new(if connected {
-                                            language.text("Device connected")
-                                        } else {
-                                            language.text("No device")
-                                        })
-                                        .family(theme::strong())
-                                        .size(11.0)
-                                        .color(p.text),
-                                    );
-                                });
-                                ui.add_space(4.0);
-                                ui.label(
-                                    egui::RichText::new(if self.apple_ready {
-                                        language.text("Apple services ready")
-                                    } else {
-                                        language.text("Apple support not found")
-                                    })
-                                    .size(10.0)
-                                    .color(p.text_secondary),
-                                )
-                                .on_hover_text(&self.apple_status);
-                            });
+                    // Appearance cycle on the far right.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let theme_icon = match self.appearance {
+                            Appearance::System => icons::Icon::Monitor,
+                            Appearance::Light => icons::Icon::Sun,
+                            Appearance::Dark => icons::Icon::Moon,
+                        };
+                        if widgets::theme_toggle_button(ui, theme_icon, self.appearance.is_dark())
+                            .on_hover_text(language.text(self.appearance.label()))
+                            .clicked()
+                        {
+                            let next = self.appearance.cycle();
+                            self.set_appearance(next, ctx);
+                        }
                     });
                 });
             });
@@ -1547,6 +1502,16 @@ impl SiloApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    let (bar, _) =
+                        ui.allocate_exact_size(egui::vec2(4.0, 36.0), egui::Sense::hover());
+                    theme::gradient_rounded(
+                        &ui.painter_at(bar),
+                        bar,
+                        2.0,
+                        p.accent_top(),
+                        p.accent_bottom(),
+                    );
+                    ui.add_space(10.0);
                     ui.vertical(|ui| {
                         ui.label(
                             egui::RichText::new(match self.current_tab {
@@ -1558,7 +1523,7 @@ impl SiloApp {
                                 AppTab::Updates => language.text("Updates"),
                             })
                             .family(theme::strong())
-                            .size(22.0)
+                            .size(24.0)
                             .color(p.text),
                         );
                         ui.label(
@@ -1569,20 +1534,6 @@ impl SiloApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Appearance cycle: System -> Light -> Dark -> System.
-                        let theme_icon = match self.appearance {
-                            Appearance::System => icons::Icon::Monitor,
-                            Appearance::Light => icons::Icon::Sun,
-                            Appearance::Dark => icons::Icon::Moon,
-                        };
-                        if widgets::theme_toggle_button(ui, theme_icon, self.appearance.is_dark())
-                            .on_hover_text(language.text(self.appearance.label()))
-                            .clicked()
-                        {
-                            let next = self.appearance.cycle();
-                            self.set_appearance(next, ctx);
-                        }
-
                         let controls_enabled = !self.is_busy && !self.scanning_syslog;
                         let mut next_udid = self.selected_udid.clone();
                         let selected_label = self
@@ -1847,7 +1798,7 @@ impl eframe::App for SiloApp {
             }
         }
 
-        self.sidebar(ctx);
+        self.nav_bar(ctx);
         self.header_panel(ctx);
         // The header hosts the appearance toggle, which may swap the palette
         // mid-frame; re-read it so the rest of the frame matches instantly
