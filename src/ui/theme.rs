@@ -120,13 +120,12 @@ pub fn system_prefers_dark() -> bool {
 }
 
 /// Every color the UI needs, resolved once per appearance.
-///
-/// "Aurora" language: deep, slightly violet-tinted neutrals, a vivid
-/// indigo→blue accent pair for gradients, and glassy elevated surfaces.
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub dark: bool,
     pub bg: Color32,
+    pub background_top: Color32,
+    pub background_bottom: Color32,
     pub sidebar: Color32,
     pub card: Color32,
     pub elevated: Color32,
@@ -134,8 +133,6 @@ pub struct Palette {
     pub text_secondary: Color32,
     pub text_tertiary: Color32,
     pub accent: Color32,
-    /// Second stop for gradient fills (hero, primary buttons, logo).
-    pub accent_2: Color32,
     pub on_accent: Color32,
     pub accent_soft: Color32,
     pub separator: Color32,
@@ -156,18 +153,19 @@ impl Palette {
     fn dark() -> Self {
         Self {
             dark: true,
-            bg: Color32::from_rgb(13, 13, 18),
-            sidebar: Color32::from_rgb(18, 18, 25),
-            card: Color32::from_rgb(25, 25, 33),
-            elevated: Color32::from_rgb(38, 38, 48),
-            text: Color32::from_rgb(246, 246, 249),
-            text_secondary: Color32::from_rgb(162, 162, 176),
-            text_tertiary: Color32::from_rgb(116, 116, 132),
-            accent: Color32::from_rgb(124, 92, 255),
-            accent_2: Color32::from_rgb(74, 168, 255),
+            bg: Color32::from_rgb(20, 20, 24),
+            background_top: Color32::from_rgb(31, 31, 40),
+            background_bottom: Color32::from_rgb(13, 13, 17),
+            sidebar: Color32::from_rgba_unmultiplied(30, 30, 37, 198),
+            card: Color32::from_rgba_unmultiplied(38, 38, 47, 214),
+            elevated: Color32::from_rgba_unmultiplied(54, 54, 64, 192),
+            text: Color32::from_rgb(245, 245, 247),
+            text_secondary: Color32::from_rgb(158, 158, 165),
+            text_tertiary: Color32::from_rgb(116, 116, 124),
+            accent: Color32::from_rgb(10, 132, 255),
             on_accent: Color32::WHITE,
-            accent_soft: Color32::from_rgba_unmultiplied(124, 92, 255, 52),
-            separator: Color32::from_white_alpha(18),
+            accent_soft: Color32::from_rgba_unmultiplied(10, 132, 255, 52),
+            separator: Color32::from_white_alpha(22),
             hairline: Color32::from_white_alpha(30),
             success: Color32::from_rgb(48, 209, 88),
             error: Color32::from_rgb(255, 69, 58),
@@ -177,19 +175,20 @@ impl Palette {
     fn light() -> Self {
         Self {
             dark: false,
-            bg: Color32::from_rgb(242, 242, 247),
-            sidebar: Color32::from_rgb(255, 255, 255),
-            card: Color32::from_rgb(255, 255, 255),
-            elevated: Color32::from_rgb(233, 233, 240),
-            text: Color32::from_rgb(23, 23, 28),
-            text_secondary: Color32::from_rgb(92, 92, 104),
-            text_tertiary: Color32::from_rgb(140, 140, 152),
-            accent: Color32::from_rgb(108, 76, 240),
-            accent_2: Color32::from_rgb(0, 150, 255),
+            bg: Color32::from_rgb(244, 244, 247),
+            background_top: Color32::from_rgb(251, 251, 253),
+            background_bottom: Color32::from_rgb(229, 232, 241),
+            sidebar: Color32::from_rgba_unmultiplied(255, 255, 255, 198),
+            card: Color32::from_rgba_unmultiplied(255, 255, 255, 236),
+            elevated: Color32::from_rgba_unmultiplied(240, 240, 245, 212),
+            text: Color32::from_rgb(29, 29, 31),
+            text_secondary: Color32::from_rgb(81, 81, 86),
+            text_tertiary: Color32::from_rgb(134, 134, 139),
+            accent: Color32::from_rgb(0, 122, 255),
             on_accent: Color32::WHITE,
-            accent_soft: Color32::from_rgba_unmultiplied(108, 76, 240, 30),
-            separator: Color32::from_black_alpha(16),
-            hairline: Color32::from_black_alpha(24),
+            accent_soft: Color32::from_rgba_unmultiplied(0, 122, 255, 34),
+            separator: Color32::from_black_alpha(18),
+            hairline: Color32::from_black_alpha(26),
             success: Color32::from_rgb(52, 199, 89),
             error: Color32::from_rgb(255, 59, 48),
         }
@@ -199,17 +198,17 @@ impl Palette {
     pub fn card_shadow(self) -> egui::Shadow {
         if self.dark {
             egui::Shadow {
-                offset: [0, 6],
-                blur: 22,
+                offset: [0, 2],
+                blur: 10,
                 spread: 0,
-                color: Color32::from_black_alpha(90),
+                color: Color32::from_black_alpha(70),
             }
         } else {
             egui::Shadow {
-                offset: [0, 6],
-                blur: 24,
+                offset: [0, 2],
+                blur: 12,
                 spread: 0,
-                color: Color32::from_black_alpha(30),
+                color: Color32::from_black_alpha(28),
             }
         }
     }
@@ -217,19 +216,10 @@ impl Palette {
     /// Brighten (dark mode) or darken (light mode) a fill for hover states.
     pub fn hover_tint(self, color: Color32) -> Color32 {
         if self.dark {
-            mix(color, Color32::WHITE, 0.10)
+            mix(color, Color32::WHITE, 0.08)
         } else {
             mix(color, Color32::from_black_alpha(255), 0.06)
         }
-    }
-
-    /// The signature accent gradient (top -> bottom).
-    pub fn accent_top(self) -> Color32 {
-        self.accent
-    }
-
-    pub fn accent_bottom(self) -> Color32 {
-        self.accent_2
     }
 }
 
@@ -295,6 +285,60 @@ pub fn gradient_rounded(
     }
 }
 
+/// A soft radial glow drawn as a triangle fan: opaque at the centre, fading to
+/// transparent at the rim. Used to tint the translucent backdrop.
+pub fn radial_glow(painter: &egui::Painter, center: egui::Pos2, radius: f32, color: Color32) {
+    let clear = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 0);
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: center,
+        uv: egui::epaint::WHITE_UV,
+        color,
+    });
+    let segments = 48u32;
+    for i in 0..=segments {
+        let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: center + egui::vec2(angle.cos(), angle.sin()) * radius,
+            uv: egui::epaint::WHITE_UV,
+            color: clear,
+        });
+    }
+    for i in 0..segments {
+        mesh.add_triangle(0, 1 + i, 2 + i);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// Paint the translucent backdrop: a soft vertical gradient with two accent
+/// glows. Drawn on the background layer, so the translucent sidebar, cards and
+/// header all blend over it for a frosted-glass look.
+pub fn paint_background(ctx: &egui::Context, p: Palette) {
+    let rect = ctx.content_rect();
+    let painter = ctx.layer_painter(egui::LayerId::background());
+    gradient_rounded(&painter, rect, 0.0, p.background_top, p.background_bottom);
+
+    let span = rect.width().max(rect.height());
+    let glow_alpha = if p.dark { 66 } else { 42 };
+    radial_glow(
+        &painter,
+        egui::pos2(rect.left() + rect.width() * 0.16, rect.top() + rect.height() * 0.06),
+        span * 0.55,
+        Color32::from_rgba_unmultiplied(p.accent.r(), p.accent.g(), p.accent.b(), glow_alpha),
+    );
+    let violet = if p.dark {
+        Color32::from_rgba_unmultiplied(140, 92, 232, 56)
+    } else {
+        Color32::from_rgba_unmultiplied(152, 112, 236, 34)
+    };
+    radial_glow(
+        &painter,
+        egui::pos2(rect.right() - rect.width() * 0.05, rect.bottom() - rect.height() * 0.05),
+        span * 0.5,
+        violet,
+    );
+}
+
 /// Apply an appearance: palette, egui visuals and spacing.
 pub fn apply_theme(ctx: &egui::Context, appearance: Appearance) {
     let p = Palette::of(appearance);
@@ -306,7 +350,7 @@ pub fn apply_theme(ctx: &egui::Context, appearance: Appearance) {
         egui::Visuals::light()
     };
 
-    visuals.panel_fill = p.bg;
+    visuals.panel_fill = Color32::TRANSPARENT;
     visuals.window_fill = p.card;
     visuals.extreme_bg_color = p.elevated;
     visuals.faint_bg_color = p.elevated;
@@ -324,32 +368,32 @@ pub fn apply_theme(ctx: &egui::Context, appearance: Appearance) {
             Color32::from_black_alpha(40)
         },
     };
-    visuals.window_corner_radius = 18.into();
-    visuals.menu_corner_radius = 12.into();
+    visuals.window_corner_radius = 14.into();
+    visuals.menu_corner_radius = 10.into();
 
     visuals.widgets.noninteractive.bg_fill = Color32::TRANSPARENT;
     visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
     visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, p.text);
-    visuals.widgets.noninteractive.corner_radius = 10.into();
+    visuals.widgets.noninteractive.corner_radius = 9.into();
 
     visuals.widgets.inactive.bg_fill = p.elevated;
     visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, p.hairline);
     visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, p.text);
-    visuals.widgets.inactive.corner_radius = 10.into();
+    visuals.widgets.inactive.corner_radius = 9.into();
 
     visuals.widgets.hovered.bg_fill = p.hover_tint(p.elevated);
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, p.hairline);
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, p.text);
-    visuals.widgets.hovered.corner_radius = 10.into();
+    visuals.widgets.hovered.corner_radius = 9.into();
 
     visuals.widgets.active.bg_fill = p.accent_soft;
     visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
     visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, p.accent);
-    visuals.widgets.active.corner_radius = 10.into();
+    visuals.widgets.active.corner_radius = 9.into();
 
     visuals.widgets.open.bg_fill = p.hover_tint(p.elevated);
     visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0_f32, p.hairline);
-    visuals.widgets.open.corner_radius = 10.into();
+    visuals.widgets.open.corner_radius = 9.into();
 
     visuals.selection.bg_fill = p.accent;
     visuals.selection.stroke = egui::Stroke::NONE;
@@ -357,10 +401,10 @@ pub fn apply_theme(ctx: &egui::Context, appearance: Appearance) {
     ctx.set_visuals(visuals);
 
     ctx.style_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(10.0, 9.0);
-        style.spacing.button_padding = egui::vec2(16.0, 8.0);
-        style.spacing.window_margin = egui::Margin::same(12);
-        style.spacing.interact_size.y = 30.0;
+        style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+        style.spacing.button_padding = egui::vec2(14.0, 7.0);
+        style.spacing.window_margin = egui::Margin::same(10);
+        style.spacing.interact_size.y = 28.0;
     });
 }
 

@@ -192,27 +192,27 @@ impl SiloApp {
 
     fn show_dashboard_hero(&mut self, ui: &mut egui::Ui, language: crate::i18n::Language) {
         let p = widgets::pal(ui);
-        let height = 196.0;
+        let height = 176.0;
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
         let painter = ui.painter_at(rect);
 
-        // Aurora gradient: accent -> accent_2 with soft light blobs.
-        theme::gradient_rounded(&painter, rect, 22.0, p.accent_top(), p.accent_bottom());
-        painter.circle_filled(
-            rect.right_top() + vec2(-56.0, 26.0),
-            132.0,
-            Color32::from_white_alpha(20),
-        );
-        painter.circle_filled(
-            rect.left_bottom() + vec2(66.0, 40.0),
-            112.0,
-            Color32::from_rgba_unmultiplied(255, 120, 190, 36),
+        // Accent-to-indigo gradient, like an Apple Wallet pass.
+        theme::gradient_rounded(
+            &painter,
+            rect,
+            20.0,
+            p.accent,
+            if p.dark {
+                Color32::from_rgb(94, 92, 230)
+            } else {
+                Color32::from_rgb(88, 86, 214)
+            },
         );
 
         let content = Rect::from_min_max(
-            rect.min + vec2(28.0, 24.0),
-            rect.max - vec2(28.0, 24.0),
+            rect.min + vec2(26.0, 22.0),
+            rect.max - vec2(26.0, 22.0),
         );
 
         // Left: copy + actions.
@@ -223,36 +223,30 @@ impl SiloApp {
                 vec2(left_w, content.height()),
             )),
             |ui| {
-                egui::Frame::new()
-                    .fill(Color32::from_white_alpha(40))
-                    .corner_radius(20)
-                    .inner_margin(egui::Margin::symmetric(11, 4))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(language.text("SILO PERSONALIZATION"))
-                                .family(theme::strong())
-                                .size(9.5)
-                                .color(Color32::WHITE),
-                        );
-                    });
-                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(language.text("SILO PERSONALIZATION"))
+                        .family(theme::strong())
+                        .size(10.0)
+                        .color(Color32::from_white_alpha(190)),
+                );
+                ui.add_space(7.0);
                 ui.label(
                     egui::RichText::new(language.text("Make your iPhone feel like yours."))
                         .family(theme::strong())
-                        .size(26.0)
+                        .size(22.0)
                         .color(Color32::WHITE),
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(
                         language.text(
                             "Customize Wallet artwork or build a lock-screen keypad theme from one simple workspace.",
                         ),
                     )
-                    .size(12.0)
-                    .color(Color32::from_white_alpha(210)),
+                    .size(11.5)
+                    .color(Color32::from_white_alpha(205)),
                 );
-                ui.add_space(16.0);
+                ui.add_space(14.0);
                 ui.horizontal(|ui| {
                     let scan_label = if self.scanning_syslog {
                         language.text("Stop card scan")
@@ -340,16 +334,16 @@ fn quick_action_tile(ui: &mut egui::Ui, icon: Icon, label: &str, width: f32) -> 
     };
     painter.rect_filled(rect, radius, fill);
 
-    let badge = Rect::from_min_size(rect.min + vec2(12.0, 13.0), vec2(36.0, 36.0));
-    theme::gradient_rounded(&painter, badge, 11.0, p.accent_top(), p.accent_bottom());
+    let badge = Rect::from_min_size(rect.min + vec2(10.0, 14.0), vec2(34.0, 34.0));
+    painter.rect_filled(badge, egui::CornerRadius::same(10), p.card);
     icons::draw(
         ui,
         icon,
         Rect::from_center_size(badge.center(), vec2(18.0, 18.0)),
-        Color32::WHITE,
+        p.accent,
     );
     painter.text(
-        pos2(rect.min.x + 58.0, rect.center().y),
+        pos2(rect.min.x + 54.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(12.5),

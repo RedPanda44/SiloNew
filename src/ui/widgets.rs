@@ -64,14 +64,14 @@ pub fn section_header(ui: &mut egui::Ui, text: &str) {
 // Surfaces
 // ---------------------------------------------------------------------------
 
-/// A soft elevated "glass" card, the primary content container.
+/// A soft elevated card, the primary content container.
 pub fn card<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = pal(ui);
     egui::Frame::new()
         .fill(p.card)
         .stroke(egui::Stroke::new(1.0_f32, p.hairline))
-        .corner_radius(18)
-        .inner_margin(egui::Margin::same(20))
+        .corner_radius(16)
+        .inner_margin(egui::Margin::same(18))
         .shadow(p.card_shadow())
         .show(ui, |ui| {
             // Fill the column width so sibling cards line up on both edges
@@ -154,71 +154,58 @@ pub fn button(
     let painter = ui.painter_at(rect);
     let radius = egui::CornerRadius::same((height / 2.0) as u8);
 
-    // Gradient pairs for the primary capsule; flat colors elsewhere.
-    let (base_top, base_bottom, base_text) = match kind {
-        ButtonKind::Primary => (p.accent_top(), p.accent_bottom(), p.on_accent),
-        ButtonKind::Secondary => (p.accent_soft, p.accent_soft, p.accent),
-        ButtonKind::Quiet => (Color32::TRANSPARENT, Color32::TRANSPARENT, p.text),
-        ButtonKind::Danger => (p.error, p.error, Color32::WHITE),
-        ButtonKind::OnAccent => (Color32::WHITE, Color32::WHITE, p.accent),
-        ButtonKind::OnAccentGhost => (
-            Color32::from_white_alpha(58),
-            Color32::from_white_alpha(58),
-            Color32::WHITE,
-        ),
+    let (base_fill, base_text) = match kind {
+        ButtonKind::Primary => (p.accent, p.on_accent),
+        ButtonKind::Secondary => (p.accent_soft, p.accent),
+        ButtonKind::Quiet => (Color32::TRANSPARENT, p.text),
+        ButtonKind::Danger => (p.error, Color32::WHITE),
+        ButtonKind::OnAccent => (Color32::WHITE, p.accent),
+        ButtonKind::OnAccentGhost => (Color32::from_white_alpha(52), Color32::WHITE),
     };
 
-    let (top, bottom, text_color) = if enabled {
+    let (fill, text_color) = if enabled {
         let ctx = ui.ctx().clone();
         let hover_t = ctx.animate_bool_responsive(response.id.with("btn-hover"), response.hovered());
         let press_t = ctx
             .animate_bool_responsive(response.id.with("btn-press"), response.is_pointer_button_down_on());
-        let mut top = base_top;
-        let mut bottom = base_bottom;
+        let mut fill = base_fill;
         if hover_t > 0.01 {
-            let (hover_top, hover_bottom) = match kind {
+            let hover_fill = match kind {
                 // Quiet buttons get a soft capsule on hover, like macOS.
                 ButtonKind::Quiet => {
-                    let c = if p.dark {
+                    if p.dark {
                         Color32::from_white_alpha(24)
                     } else {
                         Color32::from_black_alpha(16)
-                    };
-                    (c, c)
+                    }
                 }
-                _ => (p.hover_tint(base_top), p.hover_tint(base_bottom)),
+                _ => p.hover_tint(base_fill),
             };
-            top = theme::mix(base_top, hover_top, hover_t);
-            bottom = theme::mix(base_bottom, hover_bottom, hover_t);
+            fill = theme::mix(base_fill, hover_fill, hover_t);
         }
         if press_t > 0.01 {
-            let target = if p.dark { Color32::BLACK } else { Color32::WHITE };
-            top = theme::mix(top, target, 0.14 * press_t);
-            bottom = theme::mix(bottom, target, 0.14 * press_t);
+            fill = theme::mix(
+                fill,
+                if p.dark { Color32::BLACK } else { Color32::WHITE },
+                0.12 * press_t,
+            );
         }
-        (top, bottom, base_text)
+        (fill, base_text)
     } else {
-        let (top, bottom) = match kind {
-            ButtonKind::Primary | ButtonKind::Danger => (p.elevated, p.elevated),
-            ButtonKind::Secondary | ButtonKind::Quiet => (Color32::TRANSPARENT, Color32::TRANSPARENT),
-            ButtonKind::OnAccent | ButtonKind::OnAccentGhost => (
-                Color32::from_white_alpha(44),
-                Color32::from_white_alpha(44),
-            ),
+        let fill = match kind {
+            ButtonKind::Primary | ButtonKind::Danger => p.elevated,
+            ButtonKind::Secondary | ButtonKind::Quiet => Color32::TRANSPARENT,
+            ButtonKind::OnAccent | ButtonKind::OnAccentGhost => Color32::from_white_alpha(44),
         };
         let text = match kind {
             ButtonKind::OnAccent | ButtonKind::OnAccentGhost => Color32::from_white_alpha(160),
             _ => p.text_tertiary,
         };
-        (top, bottom, text)
+        (fill, text)
     };
 
-    if top != Color32::TRANSPARENT || bottom != Color32::TRANSPARENT {
-        if top == bottom {
-            painter.rect_filled(rect, radius, top);
-        } else {
-            theme::gradient_rounded(&painter, rect, height / 2.0, top, bottom);
-        }
+    if fill != Color32::TRANSPARENT {
+        painter.rect_filled(rect, radius, fill);
     }
     painter.text(
         rect.center(),
@@ -318,9 +305,9 @@ pub fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, id_salt: egui::Id) -> boo
     let painter = ui.painter_at(rect);
     let track = theme::mix(
         if p.dark {
-            theme::mix(p.card, Color32::WHITE, 0.16)
+            Color32::from_rgb(58, 58, 62)
         } else {
-            p.elevated
+            Color32::from_rgb(222, 222, 226)
         },
         p.accent,
         t,
@@ -360,9 +347,9 @@ pub fn segmented(
     // Track: clearly darker/lighter than the card so the pill reads as a
     // separate, raised element instead of a cutout.
     let track = if p.dark {
-        theme::mix(p.card, Color32::BLACK, 0.28)
+        Color32::from_rgb(40, 40, 44)
     } else {
-        p.elevated
+        Color32::from_rgb(228, 228, 233)
     };
     painter.rect_filled(rect, egui::CornerRadius::same((height / 2.0) as u8), track);
 
@@ -384,13 +371,13 @@ pub fn segmented(
     // offset shadow reads as a broken outline at this size since egui
     // shapes have no blur.)
     let pill_fill = if p.dark {
-        theme::mix(p.card, Color32::WHITE, 0.14)
+        Color32::from_rgb(66, 66, 72)
     } else {
-        p.card
+        Color32::WHITE
     };
     painter.rect_filled(pill, pill_radius, pill_fill);
     let pill_edge = if p.dark {
-        Color32::from_white_alpha(30)
+        Color32::from_white_alpha(26)
     } else {
         Color32::from_rgb(206, 206, 214)
     };
@@ -443,69 +430,76 @@ fn strip_leading_number(text: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------------
-// Top command-bar navigation
+// Sidebar navigation
 // ---------------------------------------------------------------------------
 
-/// A horizontal navigation pill for the top command bar. The selected tab is a
-/// gradient capsule; the rest are quiet with a soft hover. Returns nothing —
-/// it mutates `current` on click.
-pub fn nav_tab(
+/// macOS System Settings-style sidebar row: a colored rounded icon chip, the
+/// label, and an optional accent dot on the right (for "something new").
+pub fn nav_item_chip(
     ui: &mut egui::Ui,
     current: &mut AppTab,
     target: AppTab,
     label: &str,
     icon: Icon,
+    chip: Color32,
     badge: bool,
 ) {
     let p = pal(ui);
     let selected = *current == target;
-    let size = 13.0;
-    let text_w = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(size), Color32::WHITE)
-        .size()
-        .x;
-    let width = (text_w + 50.0).max(84.0);
-    let height = 34.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
     let t = ui
         .ctx()
-        .animate_bool_responsive(ui.make_persistent_id(("tab", label)), selected);
+        .animate_bool_responsive(ui.make_persistent_id(("nav", label)), selected);
+
+    let height = 36.0;
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
 
     let painter = ui.painter_at(rect);
-    let radius = egui::CornerRadius::same((height / 2.0) as u8);
-
+    let radius = egui::CornerRadius::same(9);
+    // Hover fill, then the accent selection blended on top.
     if response.hovered() && !selected {
         let hover = if p.dark {
-            Color32::from_white_alpha(22)
+            Color32::from_white_alpha(20)
         } else {
             Color32::from_black_alpha(12)
         };
         painter.rect_filled(rect, radius, hover);
     }
     if t > 0.01 {
-        let top = theme::mix(Color32::TRANSPARENT, p.accent_top(), t);
-        let bottom = theme::mix(Color32::TRANSPARENT, p.accent_bottom(), t);
-        theme::gradient_rounded(&painter, rect, height / 2.0, top, bottom);
+        let fill = if p.dark {
+            theme::mix(Color32::TRANSPARENT, p.accent, 0.34 * t)
+        } else {
+            theme::mix(Color32::TRANSPARENT, p.accent, 0.16 * t)
+        };
+        painter.rect_filled(rect, radius, fill);
     }
 
-    let icon_color = theme::mix(p.text_secondary, Color32::WHITE, t);
+    // Colored icon chip (like the Settings icons in macOS).
+    let chip_rect = Rect::from_center_size(
+        Pos2::new(rect.min.x + 21.0, rect.center().y),
+        vec2(24.0, 24.0),
+    );
+    painter.rect_filled(chip_rect, egui::CornerRadius::same(7), chip);
     icons::draw(
         ui,
         icon,
-        Rect::from_center_size(Pos2::new(rect.min.x + 20.0, rect.center().y), vec2(16.0, 16.0)),
-        icon_color,
+        Rect::from_center_size(chip_rect.center(), vec2(15.0, 15.0)),
+        Color32::WHITE,
     );
     painter.text(
-        Pos2::new(rect.min.x + 36.0, rect.center().y),
+        Pos2::new(rect.min.x + 42.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::new(size, if selected { theme::strong() } else { egui::FontFamily::Proportional }),
-        theme::mix(p.text_secondary, Color32::WHITE, t),
+        egui::FontId::proportional(13.0),
+        theme::mix(p.text_secondary, p.text, t.max(if selected { 1.0 } else { 0.0 })),
     );
 
     if badge {
-        painter.circle_filled(Pos2::new(rect.max.x - 10.0, rect.min.y + 9.0), 3.5, p.error);
+        painter.circle_filled(
+            Pos2::new(rect.max.x - 14.0, rect.center().y),
+            3.5,
+            p.accent,
+        );
     }
 
     if response.clicked() {
@@ -537,22 +531,21 @@ pub fn metric_tile(
             ui.set_min_height(96.0);
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
-                let badge = vec2(38.0, 38.0);
+                let badge = vec2(34.0, 34.0);
                 let (badge_rect, _) = ui.allocate_exact_size(badge, egui::Sense::hover());
                 let painter = ui.painter_at(badge_rect);
-                let bottom = theme::mix(
-                    accent,
-                    if p.dark { Color32::BLACK } else { Color32::WHITE },
-                    0.24,
+                painter.rect_filled(
+                    badge_rect,
+                    egui::CornerRadius::same(10),
+                    theme::mix(accent, p.card, 0.82),
                 );
-                theme::gradient_rounded(&painter, badge_rect, 12.0, accent, bottom);
                 icons::draw(
                     ui,
                     icon,
-                    Rect::from_center_size(badge_rect.center(), vec2(19.0, 19.0)),
-                    Color32::WHITE,
+                    Rect::from_center_size(badge_rect.center(), vec2(18.0, 18.0)),
+                    accent,
                 );
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.label(
                         egui::RichText::new(label)

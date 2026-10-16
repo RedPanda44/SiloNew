@@ -6,10 +6,10 @@
 ---
 
 ## What's New in 1.5.3
-- 🎨 **Complete UI overhaul ("Aurora"):** navigation moved from the left sidebar to a **top command bar** with gradient nav pills; every screen rebuilt on new glass cards, larger corner radii and softer shadows.
-- 🌈 **New color system:** a vivid indigo→blue accent pair drives gradient hero panels, gradient primary buttons, metric tiles and quick-action tiles.
-- 🧭 **Restyled shell:** a gradient accent bar and larger page titles, plus a refreshed status bar.
-- 🔧 **Refined controls:** segmented controls and toggle switches now follow the theme palette.
+- 🪟 **Translucent redesign:** the familiar sidebar interface now floats as **frosted glass** over a soft gradient backdrop — the sidebar, cards and status bar are semi-transparent instead of solid.
+- 🌫️ **Gradient backdrop:** a subtle vertical gradient with soft accent glows sits behind the whole app, so every surface blends over it.
+- 🎨 **Tuned palette:** softer surfaces, refined secondary text and deeper hairline edges, in both light and dark appearances.
+- 🔧 **Everything from 1.5.2 unchanged:** the built-in updater, the System appearance option and automatic device detection all work exactly as before.
 - 🐛 No changes to your saved cards, themes or backups.
 
 ## What's New in 1.5.2
