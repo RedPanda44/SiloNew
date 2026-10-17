@@ -115,14 +115,9 @@ pub struct UsbmuxDeviceEntry {
     pub properties_plist: Vec<u8>,
 }
 
-pub fn query_usbmux_devices() -> Result<Vec<UsbmuxDeviceEntry>> {
-    let addr: SocketAddr = "127.0.0.1:27015".parse().unwrap();
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
-        .context("Could not connect to Apple Mobile Device Service (usbmuxd) at 127.0.0.1:27015. Please ensure iTunes or Apple Mobile Device Support is installed and the service is running.")?;
-
-    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
-
+/// Send a single `ListDevices` request over an existing usbmuxd connection and
+/// return the raw response plist bytes.
+fn usbmux_request_list_devices(stream: &mut TcpStream) -> Result<Vec<u8>> {
     let mut req_dict = HashMap::new();
     req_dict.insert(
         "MessageType".to_string(),
@@ -175,7 +170,10 @@ pub fn query_usbmux_devices() -> Result<Vec<UsbmuxDeviceEntry>> {
 
     let mut payload = vec![0u8; resp_len - 16];
     stream.read_exact(&mut payload)?;
+    Ok(payload)
+}
 
+fn parse_usbmux_entries(payload: &[u8]) -> Result<Vec<UsbmuxDeviceEntry>> {
     let val = plist::Value::from_reader(std::io::Cursor::new(payload))
         .context("Failed to parse usbmux ListDevices response plist")?;
 
@@ -220,9 +218,52 @@ pub fn query_usbmux_devices() -> Result<Vec<UsbmuxDeviceEntry>> {
     Ok(result)
 }
 
+pub fn query_usbmux_devices() -> Result<Vec<UsbmuxDeviceEntry>> {
+    let addr: SocketAddr = "127.0.0.1:27015".parse().unwrap();
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+        .context("Could not connect to Apple Mobile Device Service (usbmuxd) at 127.0.0.1:27015. Please ensure iTunes or Apple Mobile Device Support is installed and the service is running.")?;
+
+    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+
+    let payload = usbmux_request_list_devices(&mut stream)?;
+    parse_usbmux_entries(&payload)
+}
+
+/// Holds a single long-lived usbmuxd TCP connection so the device poller does
+/// not create (and abandon) a new connection every interval. Abandoned
+/// connections linger in `TIME_WAIT` and eventually exhaust the ephemeral port
+/// range, after which every later `connect` fails with `WSAEADDRINUSE` (10048)
+/// and device sessions can no longer be opened.
+pub struct UsbmuxPoller {
+    stream: TcpStream,
+}
+
+impl UsbmuxPoller {
+    /// Open the persistent connection; returns `None` if usbmuxd is unreachable.
+    pub fn connect() -> Option<Self> {
+        let addr: SocketAddr = "127.0.0.1:27015".parse().ok()?;
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok()?;
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+        Some(Self { stream })
+    }
+
+    pub fn list_devices(&mut self) -> Result<Vec<UsbmuxDeviceEntry>> {
+        let payload = usbmux_request_list_devices(&mut self.stream)?;
+        parse_usbmux_entries(&payload)
+    }
+}
+
 pub fn list_connected_devices() -> Result<Vec<DeviceInfo>> {
+    devices_from_entries(query_usbmux_devices()?)
+}
+
+/// Enrich raw usbmux entries (device name / OS version / transports) into
+/// `DeviceInfo`. Split out so the poller can feed entries from its persistent
+/// connection instead of opening a new one.
+pub fn devices_from_entries(entries: Vec<UsbmuxDeviceEntry>) -> Result<Vec<DeviceInfo>> {
     let libs = get_apple_libraries()?;
-    let entries = query_usbmux_devices()?;
 
     let mut result = Vec::new();
 

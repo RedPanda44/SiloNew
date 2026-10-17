@@ -131,6 +131,273 @@ where
     Ok(())
 }
 
+/// Books staging root the device resolves AirTraffic asset identifiers against.
+const AIRLOCK_ROOT: &str = "/var/mobile/Media/Airlock/Book";
+
+/// Compute a path relative to [`AIRLOCK_ROOT`]. Asset identifiers are resolved
+/// by the device against this root, so a `..` traversal here makes the sync
+/// move a file from anywhere on the device (e.g. `/var/mobile/Library/...`) out
+/// into Media.
+fn airlock_relative(path: &str) -> String {
+    let base: Vec<&str> = AIRLOCK_ROOT.trim_matches('/').split('/').collect();
+    let target: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let mut common = 0;
+    while common < base.len() && common < target.len() && base[common] == target[common] {
+        common += 1;
+    }
+    let mut parts: Vec<String> = (0..base.len() - common)
+        .map(|_| "..".to_string())
+        .collect();
+    parts.extend(target[common..].iter().map(|component| (*component).to_string()));
+    parts.join("/")
+}
+
+/// Read a file from a protected system directory (e.g. a Wallet `.pkpass`) using
+/// the AirTraffic move trick: a `..`-traversal asset identifier makes the device
+/// move the original file *out* into Media, where the Media-rooted AFC service
+/// can read it. The move is destructive, so the original bytes are written
+/// straight back afterwards.
+pub fn read_system_file<L>(
+    udid: &str,
+    connection_mode: ConnectionMode,
+    target_dir: &str,
+    leaf_name: &str,
+    mut log: L,
+) -> Result<Vec<u8>>
+where
+    L: FnMut(&str),
+{
+    let token = generate_token();
+    let source = format!("{}{}", SOURCE_PREFIX, token);
+    let link_dest = format!("{}{}", LINK_PREFIX, token);
+    let recovered = format!("{}{}", RECOVERED_PREFIX, token);
+    let link_ident = format!("../../{}/p0/p1/p2/link", source);
+    let target_path = format!("{}/{}", target_dir.trim_end_matches('/'), leaf_name);
+    let target_ident = airlock_relative(&target_path);
+
+    log(&format!("Opening device session to read {}...", leaf_name));
+    let session = ActiveDeviceSession::open(Some(udid), connection_mode)
+        .context("Failed to open device session for reading")?;
+    let afc = AfcClient::new(&session).context("Failed to open AFC connection")?;
+
+    let snapshot = snapshot_books(&afc).context("Failed to snapshot Books state before read")?;
+
+    // The archive plants a symlink to the target directory (used by the
+    // write-back below); the second identifier walks out of Media straight to
+    // the target file so the device moves it into `recovered`.
+    let archive = build_streaming_zip_archive(target_dir, b"aircard-backup-staging")
+        .context("Failed to build read staging archive")?;
+    let identifiers = vec![link_ident.clone(), target_ident.clone()];
+    let books_plist = build_books_plist(&identifiers).context("Failed to build Books.plist")?;
+
+    let read_res = (|| -> Result<Vec<u8>> {
+        stage_streaming_zip(&session, &source, &archive)
+            .context("Failed to stage read symlink conduit")?;
+
+        afc.make_directory_recursive("Books/Sync")?;
+        afc.write_file("Books/Sync/Books.plist", &books_plist)?;
+
+        sync_assets_via_airtraffic(
+            udid,
+            session.transport,
+            &[
+                (link_ident.as_str(), link_dest.as_str()),
+                (target_ident.as_str(), recovered.as_str()),
+            ],
+            &mut log,
+        )
+        .context("AirTraffic read relocation failed")?;
+
+        afc.read_file(&recovered)
+            .with_context(|| format!("Failed to read {target_path} from {recovered}"))
+    })();
+
+    let data = match read_res {
+        Ok(data) => data,
+        Err(error) => {
+            let _ = afc.remove_path(&link_dest);
+            let _ = afc.remove_path(&recovered);
+            let _ = afc.remove_tree(&source);
+            sleep(Duration::from_millis(800));
+            let _ = restore_books(&afc, &snapshot);
+            return Err(error);
+        }
+    };
+
+    // The device moved the original out of the Library; write it straight back
+    // through a fresh Airlift write, reusing this session.
+    let restore_res = (|| -> Result<()> {
+        let rtoken = generate_token();
+        let rsource = format!("{}{}", SOURCE_PREFIX, rtoken);
+        let rlink = format!("{}{}", LINK_PREFIX, rtoken);
+        let rrec = format!("{}{}", RECOVERED_PREFIX, rtoken);
+        let rlink_ident = format!("../../{}/p0/p1/p2/link", rsource);
+        let rpayload_ident = format!("../../{}/payload", rsource);
+        let rtarget_dest = format!("{}/{}", rlink, leaf_name);
+        let rarchive = build_streaming_zip_archive(target_dir, &data)
+            .context("Failed to build restore archive")?;
+        let rbooks = build_books_plist(&[rlink_ident.clone(), rpayload_ident.clone()])
+            .context("Failed to build restore Books.plist")?;
+        let res = (|| -> Result<()> {
+            stage_streaming_zip(&session, &rsource, &rarchive)
+                .context("Failed to stage restore conduit")?;
+            afc.make_directory_recursive("Books/Sync")?;
+            afc.write_file("Books/Sync/Books.plist", &rbooks)?;
+            sync_assets_via_airtraffic(
+                udid,
+                session.transport,
+                &[
+                    (rlink_ident.as_str(), rlink.as_str()),
+                    (rpayload_ident.as_str(), rtarget_dest.as_str()),
+                ],
+                &mut log,
+            )
+            .context("AirTraffic restore sync failed")?;
+            Ok(())
+        })();
+        let _ = afc.remove_path(&rlink);
+        let _ = afc.remove_path(&rrec);
+        let _ = afc.remove_tree(&rsource);
+        res
+    })();
+
+    let _ = afc.remove_path(&link_dest);
+    let _ = afc.remove_path(&recovered);
+    let _ = afc.remove_tree(&source);
+    sleep(Duration::from_millis(800));
+
+    let books_res = restore_books(&afc, &snapshot);
+
+    restore_res.context("Failed to write the original file back after reading it")?;
+    books_res.context("Failed to restore Books state during read cleanup")?;
+    log(&format!("Successfully read: {}", leaf_name));
+    Ok(data)
+}
+
+/// Remove a file from a protected system directory by moving it out into Media
+/// (via the AirTraffic traversal) and deleting the moved copy.
+pub fn remove_system_file<L>(
+    udid: &str,
+    connection_mode: ConnectionMode,
+    target_dir: &str,
+    leaf_name: &str,
+    mut log: L,
+) -> Result<()>
+where
+    L: FnMut(&str),
+{
+    let token = generate_token();
+    let source = format!("{}{}", SOURCE_PREFIX, token);
+    let link_dest = format!("{}{}", LINK_PREFIX, token);
+    let recovered = format!("{}{}", RECOVERED_PREFIX, token);
+    let link_ident = format!("../../{}/p0/p1/p2/link", source);
+    let target_path = format!("{}/{}", target_dir.trim_end_matches('/'), leaf_name);
+    let target_ident = airlock_relative(&target_path);
+
+    let session = ActiveDeviceSession::open(Some(udid), connection_mode)
+        .context("Failed to open device session for removal")?;
+    let afc = AfcClient::new(&session).context("Failed to open AFC connection")?;
+
+    let snapshot = snapshot_books(&afc).context("Failed to snapshot Books state before removal")?;
+
+    let archive = build_streaming_zip_archive(target_dir, b"aircard-remove")
+        .context("Failed to build removal staging archive")?;
+    let identifiers = vec![link_ident.clone(), target_ident.clone()];
+    let books_plist = build_books_plist(&identifiers).context("Failed to build Books.plist")?;
+
+    let remove_res = (|| -> Result<()> {
+        stage_streaming_zip(&session, &source, &archive)
+            .context("Failed to stage removal conduit")?;
+        afc.make_directory_recursive("Books/Sync")?;
+        afc.write_file("Books/Sync/Books.plist", &books_plist)?;
+        sync_assets_via_airtraffic(
+            udid,
+            session.transport,
+            &[
+                (link_ident.as_str(), link_dest.as_str()),
+                (target_ident.as_str(), recovered.as_str()),
+            ],
+            &mut log,
+        )
+        .context("AirTraffic removal sync failed")?;
+        if !afc.exists(&recovered) {
+            bail!("Removal did not move {target_path} out of the Library");
+        }
+        afc.remove_path(&recovered)?;
+        Ok(())
+    })();
+
+    let _ = afc.remove_path(&link_dest);
+    let _ = afc.remove_path(&recovered);
+    let _ = afc.remove_tree(&source);
+    sleep(Duration::from_millis(800));
+    let books_res = restore_books(&afc, &snapshot);
+
+    remove_res?;
+    books_res.context("Failed to restore Books state during removal cleanup")?;
+    log(&format!("Successfully removed: {}", leaf_name));
+    Ok(())
+}
+
+/// List a system directory by relocating a symlink to it into the Media
+/// sandbox via the AirTraffic sync, then listing through the symlink.
+pub fn list_system_dir<L>(
+    udid: &str,
+    connection_mode: ConnectionMode,
+    target_dir: &str,
+    mut log: L,
+) -> Result<Vec<String>>
+where
+    L: FnMut(&str),
+{
+    let token = generate_token();
+    let source = format!("{}{}", SOURCE_PREFIX, token);
+    let link_dest = format!("{}{}", LINK_PREFIX, token);
+    let recovered = format!("{}{}", RECOVERED_PREFIX, token);
+    let link_ident = format!("../../{}/p0/p1/p2/link", source);
+
+    let session = ActiveDeviceSession::open(Some(udid), connection_mode)
+        .context("Failed to open device session for listing")?;
+    let afc = AfcClient::new(&session).context("Failed to open AFC connection")?;
+
+    let snapshot = snapshot_books(&afc).context("Failed to snapshot Books state before listing")?;
+
+    let archive = build_streaming_zip_archive(target_dir, b"")
+        .context("Failed to build list staging archive")?;
+    let books_plist = build_books_plist(std::slice::from_ref(&link_ident))
+        .context("Failed to build Books.plist")?;
+
+    let list_res = (|| -> Result<Vec<String>> {
+        stage_streaming_zip(&session, &source, &archive)
+            .context("Failed to stage list symlink conduit")?;
+
+        afc.make_directory_recursive("Books/Sync")?;
+        afc.write_file("Books/Sync/Books.plist", &books_plist)?;
+
+        sync_assets_via_airtraffic(
+            udid,
+            session.transport,
+            &[(link_ident.as_str(), link_dest.as_str())],
+            &mut log,
+        )
+        .context("AirTraffic list relocation failed")?;
+
+        afc.list_directory(&link_dest)
+            .with_context(|| format!("Failed to list {target_dir} through symlink"))
+    })();
+
+    let _ = afc.remove_path(&link_dest);
+    let _ = afc.remove_path(&recovered);
+    let _ = afc.remove_tree(&source);
+    sleep(Duration::from_millis(800));
+
+    let restore_res = restore_books(&afc, &snapshot);
+
+    let entries = list_res?;
+    restore_res.context("Failed to restore Books state during list cleanup")?;
+    Ok(entries)
+}
+
 pub fn write_system_files_batch<L>(
     udid: &str,
     connection_mode: ConnectionMode,

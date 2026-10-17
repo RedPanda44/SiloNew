@@ -9,10 +9,14 @@ use eframe::egui;
 use image::DynamicImage;
 
 use crate::apple;
-use crate::device::{ConnectionMode, DeviceInfo, DeviceTransport, list_connected_devices};
+use crate::device::{
+    ConnectionMode, DeviceInfo, DeviceTransport, UsbmuxPoller, devices_from_entries,
+    list_connected_devices,
+};
 use crate::flasher::{flash_passcode_theme, flash_wallet_skin, restore_wallet_original};
 use crate::i18n::{Language, Settings};
 use crate::image_skin::PreparedSkin;
+use crate::keycard::{KeycardPrefs, PassServer};
 use crate::passthm::{PasscodeTheme, parse_passthm_file};
 use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
 use crate::ui::theme::{self, Appearance};
@@ -172,6 +176,7 @@ pub struct SiloApp {
     pub(crate) current_card_name: String,
     pub(crate) current_card_hash: String,
     pub(crate) current_card_loading: bool,
+    pub(crate) artwork_in_flight_hash: Option<String>,
     pub(crate) current_card_error: Option<String>,
     pub(crate) card_reveal_started: Option<f64>,
     pub(crate) crop_focus: [f32; 2],
@@ -187,6 +192,13 @@ pub struct SiloApp {
     pub(crate) keypad_language: String,
     pub(crate) passcode_bold: bool,
     pub(crate) keypad_textures: Vec<(String, egui::TextureHandle)>,
+
+    // Keycard tab
+    pub(crate) keycard: KeycardPrefs,
+    pub(crate) keycard_status: String,
+    pub(crate) keycard_last_path: Option<PathBuf>,
+    pub(crate) keycard_server: Option<PassServer>,
+    pub(crate) keycard_output_dir: Option<PathBuf>,
 
     // Worker thread & progress
     pub(crate) is_busy: bool,
@@ -229,14 +241,46 @@ impl SiloApp {
         let (device_tx, device_rx) = channel();
         {
             let poll_ctx = cc.egui_ctx.clone();
-            thread::spawn(move || loop {
-                if let Ok(devices) = list_connected_devices() {
-                    if device_tx.send(devices).is_err() {
-                        break;
+            thread::spawn(move || {
+                // Hold one long-lived usbmuxd connection and only re-enrich device
+                // metadata when the device set actually changes. Opening (and
+                // abandoning) a fresh connection on every tick left thousands of
+                // TIME_WAIT sockets that exhausted the ephemeral port range, and
+                // reconnecting lockdownd each tick added more churn.
+                let mut poller: Option<UsbmuxPoller> = None;
+                let mut last_signature = String::new();
+                let mut cached: Vec<DeviceInfo> = Vec::new();
+                loop {
+                    if poller.is_none() {
+                        poller = UsbmuxPoller::connect();
                     }
-                    poll_ctx.request_repaint();
+                    if let Some(active) = poller.as_mut() {
+                        match active.list_devices() {
+                            Ok(entries) => {
+                                let signature = entries
+                                    .iter()
+                                    .map(|entry| format!("{}:{:?}", entry.udid, entry.transport))
+                                    .collect::<Vec<_>>()
+                                    .join("|");
+                                if signature != last_signature
+                                    && let Ok(devices) = devices_from_entries(entries)
+                                {
+                                    cached = devices;
+                                    last_signature = signature;
+                                }
+                                if device_tx.send(cached.clone()).is_err() {
+                                    break;
+                                }
+                                poll_ctx.request_repaint();
+                            }
+                            Err(_) => {
+                                // Connection dropped; reconnect on the next tick.
+                                poller = None;
+                            }
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(1500));
                 }
-                thread::sleep(Duration::from_millis(1500));
             });
         }
 
@@ -263,6 +307,7 @@ impl SiloApp {
             current_card_name: String::new(),
             current_card_hash: String::new(),
             current_card_loading: false,
+            artwork_in_flight_hash: None,
             current_card_error: None,
             card_reveal_started: None,
             crop_focus: [0.5, 0.5],
@@ -277,6 +322,12 @@ impl SiloApp {
             keypad_language: "English".to_string(),
             passcode_bold: false,
             keypad_textures: Vec::new(),
+
+            keycard: settings.keycard.clone(),
+            keycard_status: String::new(),
+            keycard_last_path: None,
+            keycard_server: None,
+            keycard_output_dir: None,
 
             is_busy: false,
             progress_step: 0,
@@ -337,6 +388,7 @@ impl SiloApp {
         Settings {
             language: self.language,
             appearance: self.appearance,
+            keycard: self.keycard.clone(),
         }
         .save();
     }
@@ -1178,6 +1230,15 @@ impl SiloApp {
             return;
         }
 
+        // Serialize artwork reads: never stack a second request for the same
+        // card while one is in flight. Every read performs a device AirTraffic
+        // sync, and repeated concurrent syncs crash the iPhone's `atc` daemon
+        // and exhaust short-lived TCP connections.
+        if self.artwork_in_flight_hash.as_deref() == Some(hash.as_str()) {
+            return;
+        }
+        self.artwork_in_flight_hash = Some(hash.clone());
+
         self.current_card_hash = hash.clone();
         self.current_card_texture = None;
         self.current_card_error = None;
@@ -1278,8 +1339,11 @@ impl SiloApp {
                     self.request_current_card_artwork();
                 }
                 BackgroundTaskMessage::CardArtworkLoaded { hash, result } => {
+                    if self.artwork_in_flight_hash.as_deref() == Some(hash.as_str()) {
+                        self.artwork_in_flight_hash = None;
+                    }
+                    self.current_card_loading = false;
                     if hash == self.current_card_hash && hash == self.card_hash.trim() {
-                        self.current_card_loading = false;
                         match result {
                             Ok(bytes) => match image::load_from_memory(&bytes) {
                                 Ok(image) => {
@@ -1456,6 +1520,15 @@ impl SiloApp {
                         egui::Color32::from_rgb(175, 82, 222),
                         false,
                     );
+                    widgets::nav_item_chip(
+                        ui,
+                        &mut self.current_tab,
+                        AppTab::Keycard,
+                        language.text("Keycard"),
+                        icons::Icon::Card,
+                        egui::Color32::from_rgb(255, 59, 48),
+                        false,
+                    );
                     ui.add_space(18.0);
                     ui.label(
                         egui::RichText::new(language.text("SUPPORT"))
@@ -1553,6 +1626,7 @@ impl SiloApp {
                                 AppTab::Dashboard => language.text("Dashboard"),
                                 AppTab::Wallet => language.text("Wallet Studio"),
                                 AppTab::Passcode => language.text("Passcode Studio"),
+                                AppTab::Keycard => language.text("Keycard Studio"),
                                 AppTab::Settings => language.text("Settings"),
                                 AppTab::Help => language.text("Help & Guides"),
                                 AppTab::Updates => language.text("Updates"),
@@ -1883,6 +1957,7 @@ impl eframe::App for SiloApp {
                             AppTab::Dashboard => self.show_dashboard(ctx, ui),
                             AppTab::Wallet => self.show_wallet_tab(ctx, ui),
                             AppTab::Passcode => self.show_passcode_tab(ctx, ui),
+                            AppTab::Keycard => self.show_keycard_tab(ctx, ui),
                             AppTab::Settings => self.show_settings(ctx, ui),
                             AppTab::Help => self.show_help_tab(ui),
                             AppTab::Updates => self.show_updates(ctx, ui),

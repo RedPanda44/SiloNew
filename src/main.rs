@@ -9,6 +9,7 @@ mod device;
 mod flasher;
 mod i18n;
 mod image_skin;
+mod keycard;
 mod passthm;
 mod paths;
 mod scanner;
@@ -56,6 +57,84 @@ fn main() -> eframe::Result<()> {
             ),
             Ok(None) => println!("up to date ({})", current),
             Err(e) => println!("check failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
+    // Hidden diagnostic: `silo.exe --silo-list-cards [hash]` lists the
+    // on-device Wallet card directory and probes the given hash.
+    if args.get(1).map(String::as_str) == Some("--silo-list-cards") {
+        match wallet_backup::diagnose_cards(args.get(2).map(String::as_str)) {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-read-card <hash>` attempts to read
+    // the card artwork through the symlink escape.
+    if args.get(1).map(String::as_str) == Some("--silo-read-card") {
+        let hash = args.get(2).cloned().unwrap_or_default();
+        match wallet_backup::diagnose_read(&hash) {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-ls <path>` lists an on-device
+    // directory through the symlink escape.
+    if args.get(1).map(String::as_str) == Some("--silo-ls") {
+        let path = args
+            .get(2)
+            .cloned()
+            .unwrap_or_else(|| "/var/mobile/Library/Passes/Cards".to_string());
+        match wallet_backup::diagnose_ls(&path) {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-roundtrip` validates the full
+    // write+read round-trip on a probe file in a protected Library directory.
+    if args.get(1).map(String::as_str) == Some("--silo-roundtrip") {
+        match wallet_backup::diagnose_roundtrip() {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-cleanup` removes leftover staging.
+    if args.get(1).map(String::as_str) == Some("--silo-cleanup") {
+        match wallet_backup::diagnose_cleanup() {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-read-card2 <hash>` reads the card
+    // artwork via a two-stage device-side move out of the Library.
+    if args.get(1).map(String::as_str) == Some("--silo-read-card2") {
+        let hash = args.get(2).cloned().unwrap_or_default();
+        match wallet_backup::diagnose_read2(&hash) {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-test-move` verifies the AirTraffic
+    // exploit moves a staged file to a Media destination without host bytes.
+    if args.get(1).map(String::as_str) == Some("--silo-test-move") {
+        match wallet_backup::diagnose_move() {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
+        }
+        return Ok(());
+    }
+    // Hidden diagnostic: `silo.exe --silo-test-stage` validates the
+    // streaming-zip conduit staging path.
+    if args.get(1).map(String::as_str) == Some("--silo-test-stage") {
+        match wallet_backup::diagnose_stage() {
+            Ok(report) => println!("{report}"),
+            Err(e) => println!("diagnostic failed: {e:#}"),
         }
         return Ok(());
     }

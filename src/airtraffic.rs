@@ -365,6 +365,10 @@ where
                 );
             }
         }
+        log(&format!(
+            "AssetManifest downloads: {:?}",
+            available_downloads
+        ));
 
         // 7. Dispatch AssetCompleted for each asset
         let cf_dataclass = libs.create_cf_string("Book")?;

@@ -137,6 +137,12 @@ pub fn build_streaming_zip_archive_multi(target: &str, items: &[(&str, &[u8])]) 
         }
     }
 
+    Ok(pack_stored_zip(entries))
+}
+
+/// Pack entries into a "stored" (uncompressed) zip with Apple StreamingZip
+/// Unix metadata (extra field 0x5A53 carrying the file mode).
+fn pack_stored_zip(entries: Vec<StoredZipEntry>) -> Vec<u8> {
     // Pack into stored zip with Apple StreamingZip Unix metadata
     let mut output = Vec::new();
     let mut cd_entries = Vec::new();
@@ -222,7 +228,7 @@ pub fn build_streaming_zip_archive_multi(target: &str, items: &[(&str, &[u8])]) 
     output.extend_from_slice(&cd_start.to_le_bytes());
     output.extend_from_slice(&0u16.to_le_bytes()); // comment len
 
-    Ok(output)
+    output
 }
 
 pub fn build_books_plist(identifiers: &[String]) -> Result<Vec<u8>> {

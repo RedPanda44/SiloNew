@@ -347,6 +347,46 @@ impl Language {
             "System" => "跟随系统",
             "System follows the Windows theme." => "“跟随系统”将使用 Windows 的主题设置。",
             "Devices are detected automatically." => "设备会自动检测。",
+            "Keycard" => "门禁卡",
+            "Keycard Studio" => "门禁卡工作台",
+            "HOUSE KEYCARD" => "家庭门禁卡",
+            "Create an NFC door-key pass and add it to Wallet." => {
+                "创建 NFC 门禁卡并将其添加到钱包。"
+            }
+            "Pass details" => "卡片详情",
+            "House name" => "家庭名称",
+            "Owner name" => "持有人姓名",
+            "Access label" => "权限标签",
+            "NFC payload" => "NFC 数据",
+            "NFC payload help" => "读取器需要的十六进制字符串；留空则仅使用二维码。",
+            "Background" => "背景色",
+            "Foreground" => "前景色",
+            "Label color" => "标签颜色",
+            "Card images" => "卡片图片",
+            "Icon image" => "图标图片",
+            "Logo image" => "标识图片",
+            "Choose image" => "选择图片",
+            "Default" => "默认",
+            "Signing certificate" => "签名证书",
+            "Apple only accepts signed passes. Add a Pass Type ID certificate to enable Wallet installation." => {
+                "Apple 仅接受已签名的卡片。添加 Pass Type ID 证书后即可安装到钱包。"
+            }
+            "Certificate (.p12)" => "证书 (.p12)",
+            "Certificate password" => "证书密码",
+            "Pass Type ID" => "Pass Type ID",
+            "Team ID" => "Team ID",
+            "WWDR certificate" => "WWDR 证书",
+            "Bundle" => "打包",
+            "Generate keycard" => "生成门禁卡",
+            "Save .pkpass" => "保存 .pkpass",
+            "Send to iPhone" => "发送到 iPhone",
+            "Share on LAN" => "局域网共享",
+            "Stop sharing" => "停止共享",
+            "Add to Wallet" => "添加到钱包",
+            "Open the link on your iPhone to add the keycard to Wallet." => {
+                "在 iPhone 上打开此链接即可将门禁卡添加到钱包。"
+            }
+            "Choose a folder" => "选择文件夹",
             _ => source,
         }
     }
@@ -361,12 +401,14 @@ impl Language {
     }
 }
 
-/// Persisted preferences: interface language and appearance.
+/// Persisted preferences: interface language, appearance and keycard settings.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub language: Language,
     #[serde(default)]
     pub appearance: Appearance,
+    #[serde(default)]
+    pub keycard: crate::keycard::KeycardPrefs,
 }
 
 impl Default for Settings {
@@ -374,6 +416,7 @@ impl Default for Settings {
         Self {
             language: Language::detect_from_system(),
             appearance: Appearance::default(),
+            keycard: crate::keycard::KeycardPrefs::default(),
         }
     }
 }
@@ -443,6 +486,7 @@ mod tests {
         let settings = Settings {
             language: Language::English,
             appearance: Appearance::Light,
+            ..Settings::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
         let parsed: Settings = serde_json::from_str(&json).unwrap();

@@ -44,11 +44,12 @@ impl AfcClient {
             }
 
             let secure_context = (libs.amd_service_connection_get_secure_io_context)(service_conn);
+            eprintln!("[dbg] afc secure_context null={}", secure_context.is_null());
             if !secure_context.is_null() {
                 (libs.afc_connection_set_secure_context)(conn, secure_context);
                 (libs.afc_connection_set_dispose_secure_context)(conn, 0);
-                (libs.afc_connection_set_io_timeout)(conn, 30);
             }
+            (libs.afc_connection_set_io_timeout)(conn, 15);
 
             Ok(Self {
                 libs,
