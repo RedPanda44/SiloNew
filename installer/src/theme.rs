@@ -49,7 +49,13 @@ pub fn ease_out_back(t: f32) -> f32 {
 }
 
 /// Vertical gradient approximated with horizontal bands.
-pub fn gradient_v(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32, bands: usize) {
+pub fn gradient_v(
+    painter: &egui::Painter,
+    rect: Rect,
+    top: Color32,
+    bottom: Color32,
+    bands: usize,
+) {
     if rect.height() < 1.0 {
         return;
     }
@@ -57,7 +63,11 @@ pub fn gradient_v(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Col
     for i in 0..bands {
         let t = i as f32 / (bands - 1).max(1) as f32;
         let y0 = rect.min.y + band_h * i as f32;
-        let y1 = if i + 1 == bands { rect.max.y } else { y0 + band_h };
+        let y1 = if i + 1 == bands {
+            rect.max.y
+        } else {
+            y0 + band_h
+        };
         let strip = Rect::from_min_max(Pos2::new(rect.min.x, y0), Pos2::new(rect.max.x, y1));
         painter.rect_filled(strip, 0.0, mix(top, bottom, t));
     }

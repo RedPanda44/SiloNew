@@ -60,25 +60,27 @@ struct ApiAsset {
     size: u64,
 }
 
-fn agent() -> ureq::Agent {
+fn agent() -> Result<ureq::Agent> {
     // ureq's native-tls backend must be attached explicitly; on Windows this
     // uses the OS (schannel) certificate store, so no bundled roots are needed.
     let tls = ureq::native_tls::TlsConnector::new()
-        .expect("failed to initialise the system TLS backend");
-    ureq::AgentBuilder::new()
+        .context("Could not initialise the system TLS backend")?;
+    Ok(ureq::AgentBuilder::new()
         .user_agent(USER_AGENT)
         .tls_connector(std::sync::Arc::new(tls))
         .timeout_connect(Duration::from_secs(15))
         .timeout(Duration::from_secs(300))
-        .build()
+        .build())
 }
 
 /// Turn `v1.5.2`, `1.5`, `1.6.0-rc1` into a comparable numeric tuple.
 pub fn parse_version(v: &str) -> (u64, u64, u64) {
     let cleaned = v.trim().trim_start_matches(['v', 'V']);
-    let mut parts = cleaned
-        .split(['.', '-', '+'])
-        .map(|p| p.chars().take_while(|c| c.is_ascii_digit()).collect::<String>());
+    let mut parts = cleaned.split(['.', '-', '+']).map(|p| {
+        p.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+    });
     let num = |s: Option<String>| s.and_then(|x| x.parse::<u64>().ok()).unwrap_or(0);
     (num(parts.next()), num(parts.next()), num(parts.next()))
 }
@@ -92,7 +94,7 @@ pub fn is_newer(remote: &str, current: &str) -> bool {
 /// `Ok(None)` when the running build is current.
 pub fn check_for_update(current_version: &str) -> Result<Option<ReleaseInfo>> {
     let url = format!("https://api.github.com/repos/{UPDATE_REPO}/releases/latest");
-    let response = match agent().get(&url).call() {
+    let response = match agent()?.get(&url).call() {
         Ok(response) => response,
         // No releases published yet.
         Err(ureq::Error::Status(404, _)) => return Ok(None),
@@ -139,7 +141,12 @@ pub fn updates_dir() -> PathBuf {
 pub fn cleanup_updates() {
     if let Ok(entries) = fs::read_dir(updates_dir()) {
         for entry in entries.flatten() {
-            let _ = fs::remove_file(entry.path());
+            let path = entry.path();
+            if path.is_dir() {
+                let _ = fs::remove_dir_all(path);
+            } else {
+                let _ = fs::remove_file(path);
+            }
         }
     }
 }
@@ -159,36 +166,52 @@ where
     fs::create_dir_all(&dir).context("Could not create the updates folder")?;
     let dest = dir.join(format!("silo-{}.new.exe", info.version));
 
-    let response = agent()
-        .get(url)
-        .call()
-        .context("Could not download the update")?;
-    let total = response
-        .header("Content-Length")
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(info.download_size);
+    let downloaded = (|| -> Result<()> {
+        let response = agent()?
+            .get(url)
+            .call()
+            .context("Could not download the update")?;
+        let total = response
+            .header("Content-Length")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(info.download_size);
 
-    let mut reader = response.into_reader();
-    let mut file = fs::File::create(&dest).context("Could not write the downloaded update")?;
-    let mut buf = [0u8; 64 * 1024];
-    let mut done: u64 = 0;
-    loop {
-        let n = reader
-            .read(&mut buf)
-            .context("The update download was interrupted")?;
-        if n == 0 {
-            break;
+        let mut reader = response.into_reader();
+        let mut file = fs::File::create(&dest).context("Could not write the downloaded update")?;
+        let mut buf = [0u8; 64 * 1024];
+        let mut done: u64 = 0;
+        loop {
+            let n = reader
+                .read(&mut buf)
+                .context("The update download was interrupted")?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])
+                .context("Could not write the downloaded update")?;
+            done += n as u64;
+            progress(done, total);
         }
-        file.write_all(&buf[..n])
-            .context("Could not write the downloaded update")?;
-        done += n as u64;
-        progress(done, total);
+        let _ = file.sync_all();
+        if total > 0 && done != total {
+            bail!("The download ended early ({done} of {total} bytes). Please try again.");
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = downloaded {
+        // Never leave a truncated `.exe` behind: a later launch could mistake
+        // it for a valid downloaded build.
+        let _ = fs::remove_file(&dest);
+        return Err(error);
     }
-    let _ = file.sync_all();
 
     // A Windows executable starts with the "MZ" signature.
     let mut header = [0u8; 2];
-    fs::File::open(&dest)?.read_exact(&mut header)?;
+    if let Err(error) = fs::File::open(&dest).and_then(|mut file| file.read_exact(&mut header)) {
+        let _ = fs::remove_file(&dest);
+        return Err(error).context("Could not verify the downloaded update");
+    }
     if &header != b"MZ" {
         let _ = fs::remove_file(&dest);
         bail!("The downloaded file is not a valid Windows executable");
@@ -199,10 +222,23 @@ where
 /// Start the detached helper that will replace the running executable, then
 /// relaunch it. The caller must exit the app right after this returns.
 pub fn launch_apply_update(new_exe: &Path, target: &Path) -> Result<()> {
+    if !new_exe.is_file() {
+        bail!("The downloaded update is missing: {}", new_exe.display());
+    }
+    if target.as_os_str().is_empty() {
+        bail!("Could not determine the running executable path");
+    }
+    if let Some(parent) = target.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.is_dir()
+    {
+        bail!(
+            "The application folder no longer exists: {}",
+            parent.display()
+        );
+    }
     let mut cmd = Command::new(new_exe);
-    cmd.arg(APPLY_UPDATE_FLAG)
-        .arg(target)
-        .arg(new_exe);
+    cmd.arg(APPLY_UPDATE_FLAG).arg(target).arg(new_exe);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -210,14 +246,33 @@ pub fn launch_apply_update(new_exe: &Path, target: &Path) -> Result<()> {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
     }
-    cmd.spawn()
-        .context("Could not start the update helper")?;
+    cmd.spawn().context("Could not start the update helper")?;
     Ok(())
 }
 
 /// Entry point for the detached helper: copy ourselves over `target` once the
 /// old process has released the lock, then relaunch it. Returns an exit code.
 pub fn run_apply_update(target: &Path, source: &Path) -> i32 {
+    if target.as_os_str().is_empty() {
+        return 2;
+    }
+    // Missing/blank source, or source == target: just relaunch the existing
+    // build rather than copying a file onto itself.
+    let same_file = source
+        .is_file()
+        .then(|| fs::canonicalize(source).ok())
+        .flatten()
+        .zip(fs::canonicalize(target).ok())
+        .is_some_and(|(source, target)| source == target);
+    if same_file {
+        let _ = Command::new(target).spawn();
+        return 0;
+    }
+    if !source.is_file() {
+        let _ = Command::new(target).spawn();
+        return 1;
+    }
+
     let mut replaced = false;
     for _ in 0..240 {
         // While the old app is still running, `target` is locked and the copy

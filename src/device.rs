@@ -36,8 +36,9 @@ impl DeviceTransport {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ConnectionMode {
+    #[default]
     Auto,
     Usb,
     Wifi,
@@ -187,31 +188,30 @@ fn parse_usbmux_entries(payload: &[u8]) -> Result<Vec<UsbmuxDeviceEntry>> {
 
     let mut result = Vec::new();
     for entry in device_list {
-        if let Some(d) = entry.as_dictionary() {
-            if let Some(props_val) = d.get("Properties") {
-                if let Some(props_dict) = props_val.as_dictionary() {
-                    let serial = props_dict
-                        .get("SerialNumber")
-                        .and_then(|v| v.as_string())
-                        .unwrap_or_default()
-                        .to_string();
-                    let connection_type = props_dict
-                        .get("ConnectionType")
-                        .and_then(|v| v.as_string())
-                        .unwrap_or("USB");
-                    let transport = DeviceTransport::from_usbmux(connection_type);
+        if let Some(d) = entry.as_dictionary()
+            && let Some(props_val) = d.get("Properties")
+            && let Some(props_dict) = props_val.as_dictionary()
+        {
+            let serial = props_dict
+                .get("SerialNumber")
+                .and_then(|v| v.as_string())
+                .unwrap_or_default()
+                .to_string();
+            let connection_type = props_dict
+                .get("ConnectionType")
+                .and_then(|v| v.as_string())
+                .unwrap_or("USB");
+            let transport = DeviceTransport::from_usbmux(connection_type);
 
-                    let mut props_binary = Vec::new();
-                    plist::to_writer_binary(&mut props_binary, props_val)
-                        .context("Failed to serialize device properties to binary plist")?;
+            let mut props_binary = Vec::new();
+            plist::to_writer_binary(&mut props_binary, props_val)
+                .context("Failed to serialize device properties to binary plist")?;
 
-                    result.push(UsbmuxDeviceEntry {
-                        udid: serial,
-                        transport,
-                        properties_plist: props_binary,
-                    });
-                }
-            }
+            result.push(UsbmuxDeviceEntry {
+                udid: serial,
+                transport,
+                properties_plist: props_binary,
+            });
         }
     }
 

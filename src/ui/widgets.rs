@@ -165,9 +165,12 @@ pub fn button(
 
     let (fill, text_color) = if enabled {
         let ctx = ui.ctx().clone();
-        let hover_t = ctx.animate_bool_responsive(response.id.with("btn-hover"), response.hovered());
-        let press_t = ctx
-            .animate_bool_responsive(response.id.with("btn-press"), response.is_pointer_button_down_on());
+        let hover_t =
+            ctx.animate_bool_responsive(response.id.with("btn-hover"), response.hovered());
+        let press_t = ctx.animate_bool_responsive(
+            response.id.with("btn-press"),
+            response.is_pointer_button_down_on(),
+        );
         let mut fill = base_fill;
         if hover_t > 0.01 {
             let hover_fill = match kind {
@@ -186,7 +189,11 @@ pub fn button(
         if press_t > 0.01 {
             fill = theme::mix(
                 fill,
-                if p.dark { Color32::BLACK } else { Color32::WHITE },
+                if p.dark {
+                    Color32::BLACK
+                } else {
+                    Color32::WHITE
+                },
                 0.12 * press_t,
             );
         }
@@ -253,10 +260,14 @@ pub fn theme_toggle_button(ui: &mut egui::Ui, icon: Icon, dark_now: bool) -> egu
     let size = 30.0;
     let (rect, response) = ui.allocate_exact_size(vec2(size, size), egui::Sense::click());
     let ctx = ui.ctx().clone();
-    let hover_t = ctx.animate_bool_responsive(response.id.with("icon-btn-hover"), response.hovered());
+    let hover_t =
+        ctx.animate_bool_responsive(response.id.with("icon-btn-hover"), response.hovered());
     // 0 -> 1 across a theme flip; deviation peaks mid-flip.
-    let flip_t =
-        ctx.animate_value_with_time(response.id.with("theme-flip"), if dark_now { 1.0 } else { 0.0 }, 0.30);
+    let flip_t = ctx.animate_value_with_time(
+        response.id.with("theme-flip"),
+        if dark_now { 1.0 } else { 0.0 },
+        0.30,
+    );
     let deviation = 4.0 * flip_t * (1.0 - flip_t);
 
     let painter = ui.painter_at(rect);
@@ -398,19 +409,29 @@ pub fn segmented(
             seg_rect.center(),
             egui::Align2::CENTER_CENTER,
             *option,
-            egui::FontId::new(12.0, if selected_now { theme::strong() } else { egui::FontFamily::Proportional }),
-            if selected_now { p.text } else { p.text_secondary },
+            egui::FontId::new(
+                12.0,
+                if selected_now {
+                    theme::strong()
+                } else {
+                    egui::FontFamily::Proportional
+                },
+            ),
+            if selected_now {
+                p.text
+            } else {
+                p.text_secondary
+            },
         );
     }
 
-    if response.clicked() {
-        if let Some(pos) = response.interact_pointer_pos() {
-            if rect.contains(pos) {
-                let idx = (((pos.x - rect.min.x) / seg_w) as usize).min(options.len() - 1);
-                if idx != selected {
-                    return Some(idx);
-                }
-            }
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+        && rect.contains(pos)
+    {
+        let idx = (((pos.x - rect.min.x) / seg_w) as usize).min(options.len() - 1);
+        if idx != selected {
+            return Some(idx);
         }
     }
     None
@@ -491,15 +512,15 @@ pub fn nav_item_chip(
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(13.0),
-        theme::mix(p.text_secondary, p.text, t.max(if selected { 1.0 } else { 0.0 })),
+        theme::mix(
+            p.text_secondary,
+            p.text,
+            t.max(if selected { 1.0 } else { 0.0 }),
+        ),
     );
 
     if badge {
-        painter.circle_filled(
-            Pos2::new(rect.max.x - 14.0, rect.center().y),
-            3.5,
-            p.accent,
-        );
+        painter.circle_filled(Pos2::new(rect.max.x - 14.0, rect.center().y), 3.5, p.accent);
     }
 
     if response.clicked() {
@@ -554,16 +575,24 @@ pub fn metric_tile(
                             .color(p.text_tertiary),
                     );
                     ui.add_space(2.0);
-                    ui.label(egui::RichText::new(value).family(theme::strong()).size(15.0).color(p.text));
                     ui.label(
-                        egui::RichText::new(detail).size(10.5).color(p.text_secondary),
+                        egui::RichText::new(value)
+                            .family(theme::strong())
+                            .size(15.0)
+                            .color(p.text),
+                    );
+                    ui.label(
+                        egui::RichText::new(detail)
+                            .size(10.5)
+                            .color(p.text_secondary),
                     );
                 });
             });
         });
-    let hover = ui
-        .ctx()
-        .animate_bool_responsive(response.response.id.with("tile-hover"), response.response.hovered());
+    let hover = ui.ctx().animate_bool_responsive(
+        response.response.id.with("tile-hover"),
+        response.response.hovered(),
+    );
     if hover > 0.01 {
         ui.painter().rect_stroke(
             response.response.rect,
@@ -604,7 +633,8 @@ pub fn bullet_row(ui: &mut egui::Ui, text: &str) {
     let text = strip_leading_number(text);
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(8.0, 16.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.left_center() + vec2(1.0, 0.0), 2.0, p.accent);
+        ui.painter()
+            .circle_filled(rect.left_center() + vec2(1.0, 0.0), 2.0, p.accent);
         ui.add_space(4.0);
         ui.label(egui::RichText::new(text).size(12.5).color(p.text_secondary));
     });

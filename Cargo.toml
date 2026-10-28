@@ -1,6 +1,6 @@
 [package]
 name = "silo"
-version = "1.5.3"
+version = "1.5.4"
 edition = "2024"
 description = "Native Windows Silo client"
 license = "MIT"

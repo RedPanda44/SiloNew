@@ -38,10 +38,8 @@ fn main() -> eframe::Result<()> {
     if args.get(1).map(String::as_str) == Some(updater::APPLY_UPDATE_FLAG) {
         let target = args.get(2).cloned().unwrap_or_default();
         let source = args.get(3).cloned().unwrap_or_default();
-        let code = updater::run_apply_update(
-            std::path::Path::new(&target),
-            std::path::Path::new(&source),
-        );
+        let code =
+            updater::run_apply_update(std::path::Path::new(&target), std::path::Path::new(&source));
         std::process::exit(code);
     }
     // Hidden diagnostic: `silo.exe --silo-check-update [version]` prints the

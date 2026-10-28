@@ -5,6 +5,15 @@
 
 ---
 
+## What's New in 1.5.4
+- 🔐 **Certificate password protection:** keycard signing passwords are now encrypted on disk with Windows DPAPI (readable only by your Windows account). Existing plain-text passwords are migrated automatically.
+- 💾 **Preferences actually persist:** the transport mode (Auto/USB/WiFi), passcode target cache, keypad language and Bold Text toggle now survive restarts instead of resetting to defaults.
+- 🛡️ **Safer device writes and restores:** if writing an original card file back fails, Silo keeps the recovered copy on the iPhone instead of deleting the only copy; wallet backups, saved cards and settings are now written atomically.
+- 🎨 **More reliable artwork loading:** concurrent card-artwork reads are queued instead of stacked (which could crash the iPhone's sync service), and stale responses no longer clear the current preview.
+- 📡 **Keycard sharing fixed:** stopping a LAN share now releases the port promptly, the certificate password field is masked, and regenerating a keycard invalidates the old share link.
+- 🧹 **Updater and installer hardening:** interrupted downloads are deleted, downloaded builds are verified, failed app launches surface an error instead of silently closing, and uninstall cleans up legacy `AirCard` data too.
+- 🐛 No changes to your saved cards, themes or backups.
+
 ## What's New in 1.5.3
 - 🪟 **Translucent redesign:** the familiar sidebar interface now floats as **frosted glass** over a soft gradient backdrop — the sidebar, cards and status bar are semi-transparent instead of solid.
 - 🌫️ **Gradient backdrop:** a subtle vertical gradient with soft accent glows sits behind the whole app, so every surface blends over it.
@@ -42,7 +51,7 @@
 - 🔢 **Lock Screen Passcode Themes (.passthm):** Apply custom keypad button artwork from popular Cowabunga & Nugget `.passthm` themes directly to iOS lockscreen.
 - 🏠 **Dashboard:** View device status, saved cards, recent activity, and one-click workflow shortcuts.
 - ⚙️ **Workspace Settings:** Configure transport and interface language from a dedicated settings page.
-- ⚡ **100% Native & Lightweight:** Single standalone `silo.exe` (~7.5 MB). No Python, no Flet, no webview, no bloated runtimes.
+- ⚡ **100% Native & Lightweight:** Single standalone `silo.exe` (under 10 MB). No Python, no Flet, no webview, no bloated runtimes.
 - 🪟 **Workspace UI:** Sidebar navigation, focused Wallet and Passcode studios, and a redesigned dark theme built with `egui` and `eframe`.
 - 📱 **Zero-Hassle Card Detection:** Tap any card in your iPhone's Wallet app while connected to detect its hash in real-time via `syslog_relay`.
 - 📶 **USB & WiFi Transport:** Scan card events and apply Wallet or passcode assets through USB or a paired local WiFi connection.

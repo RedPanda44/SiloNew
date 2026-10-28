@@ -10,9 +10,7 @@ use crate::airlift::{
 };
 use crate::airtraffic::sync_assets_via_airtraffic;
 use crate::device::{ActiveDeviceSession, ConnectionMode};
-use crate::wallet_backup::{
-    capture_original_card, load_original_assets, resolve_device_card_hash,
-};
+use crate::wallet_backup::{capture_original_card, load_original_assets, resolve_device_card_hash};
 
 #[allow(dead_code)]
 pub const TARGET_WALLET_ASSETS: &[&str] = &[
@@ -36,15 +34,30 @@ unsafe extern "system" {
 
 pub fn generate_token() -> String {
     let mut bytes = [0u8; 10];
-    unsafe {
-        let _ = BCryptGenRandom(
+    let status = unsafe {
+        BCryptGenRandom(
             std::ptr::null_mut(),
             bytes.as_mut_ptr(),
             bytes.len() as u32,
             2, // BCRYPT_USE_SYSTEM_PREFERRED_RNG
-        );
+        )
+    };
+    if status == 0 {
+        return bytes.iter().map(|b| format!("{:02x}", b)).collect();
     }
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+
+    // If the system RNG is unavailable, fall back to a process/time-derived
+    // token instead of returning a predictable all-zero identifier that would
+    // make every staging path collide.
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    format!("{:016x}{:08x}", hasher.finish(), std::process::id())
 }
 
 pub fn write_system_file<L>(
@@ -145,10 +158,12 @@ fn airlock_relative(path: &str) -> String {
     while common < base.len() && common < target.len() && base[common] == target[common] {
         common += 1;
     }
-    let mut parts: Vec<String> = (0..base.len() - common)
-        .map(|_| "..".to_string())
-        .collect();
-    parts.extend(target[common..].iter().map(|component| (*component).to_string()));
+    let mut parts: Vec<String> = (0..base.len() - common).map(|_| "..".to_string()).collect();
+    parts.extend(
+        target[common..]
+            .iter()
+            .map(|component| (*component).to_string()),
+    );
     parts.join("/")
 }
 
@@ -216,10 +231,22 @@ where
         Ok(data) => data,
         Err(error) => {
             let _ = afc.remove_path(&link_dest);
-            let _ = afc.remove_path(&recovered);
             let _ = afc.remove_tree(&source);
             sleep(Duration::from_millis(800));
             let _ = restore_books(&afc, &snapshot);
+            // `recovered` holds the file that AirTraffic moved out of the
+            // protected directory. Never delete it on failure: leaving it in
+            // Media keeps the user's original data recoverable, whereas
+            // deleting it would silently destroy the only copy.
+            if afc.exists(&recovered) {
+                log(&format!(
+                    "Read failed; the original file was left at Media/{} for safety.",
+                    recovered
+                ));
+                return Err(error.context(format!(
+                    "The original file was left at Media/{recovered} because writing it back failed"
+                )));
+            }
             return Err(error);
         }
     };
@@ -262,7 +289,16 @@ where
     })();
 
     let _ = afc.remove_path(&link_dest);
-    let _ = afc.remove_path(&recovered);
+    if restore_res.is_ok() {
+        // The original bytes are back in place; the staged copy is no longer
+        // needed.
+        let _ = afc.remove_path(&recovered);
+    } else if afc.exists(&recovered) {
+        log(&format!(
+            "Write-back failed; the original file was left at Media/{} for safety.",
+            recovered
+        ));
+    }
     let _ = afc.remove_tree(&source);
     sleep(Duration::from_millis(800));
 
@@ -759,4 +795,18 @@ where
     );
     log("Passcode theme successfully written! Lock or reboot iPhone to see new keypad.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_token;
+
+    #[test]
+    fn tokens_are_long_enough_and_unique() {
+        let first = generate_token();
+        let second = generate_token();
+        assert!(first.len() >= 20);
+        assert_ne!(first, "00000000000000000000");
+        assert_ne!(first, second);
+    }
 }

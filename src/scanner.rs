@@ -83,15 +83,15 @@ pub fn is_valid_card_hash(h: &str) -> bool {
     }
 
     // '=' can only appear at the end
-    if let Some(pos) = trimmed.find('=') {
-        if pos < len - 2 {
-            return false;
-        }
+    if let Some(pos) = trimmed.find('=')
+        && pos < len - 2
+    {
+        return false;
     }
 
     // Normalize URL-safe base64 and pad
     let mut b64 = trimmed.replace('-', "+").replace('_', "/");
-    while b64.len() % 4 != 0 {
+    while !b64.len().is_multiple_of(4) {
         b64.push('=');
     }
 
@@ -137,16 +137,20 @@ pub fn is_valid_card_hash(h: &str) -> bool {
 
 pub fn load_saved_cards() -> Vec<SavedCard> {
     let path = get_cards_storage_path();
-    if let Ok(content) = fs::read_to_string(&path) {
-        if let Ok(cards) = serde_json::from_str::<Vec<SavedCard>>(&content) {
-            let valid_cards: Vec<SavedCard> = cards
-                .into_iter()
-                .filter(|c| is_valid_card_hash(&c.hash))
-                .collect();
-            // Automatically purge corrupted or garbage entries from disk
+    if let Ok(content) = fs::read_to_string(&path)
+        && let Ok(cards) = serde_json::from_str::<Vec<SavedCard>>(&content)
+    {
+        let total = cards.len();
+        let valid_cards: Vec<SavedCard> = cards
+            .into_iter()
+            .filter(|c| is_valid_card_hash(&c.hash))
+            .collect();
+        // Automatically purge corrupted or garbage entries from disk, but
+        // only touch the file when something was actually removed.
+        if valid_cards.len() != total {
             save_saved_cards(&valid_cards);
-            return valid_cards;
         }
+        return valid_cards;
     }
     Vec::new()
 }
@@ -161,7 +165,7 @@ pub fn save_saved_cards(cards: &[SavedCard]) {
         }
     }
     if let Ok(json) = serde_json::to_string_pretty(&unique) {
-        let _ = fs::write(path, json);
+        let _ = crate::paths::write_atomic(&path, json.as_bytes());
     }
 }
 
@@ -224,12 +228,12 @@ static CARD_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 });
 
 pub fn extract_card_name_from_line(line: &str) -> Option<String> {
-    if let Some(caps) = DESC_RE.captures(line) {
-        if let Some(m) = caps.get(1) {
-            let name = m.as_str().trim();
-            if name.len() > 1 && !name.to_lowercase().contains("<private>") {
-                return Some(name.to_string());
-            }
+    if let Some(caps) = DESC_RE.captures(line)
+        && let Some(m) = caps.get(1)
+    {
+        let name = m.as_str().trim();
+        if name.len() > 1 && !name.to_lowercase().contains("<private>") {
+            return Some(name.to_string());
         }
     }
     None
@@ -243,20 +247,20 @@ pub fn extract_card_hash_from_line(line: &str) -> Option<String> {
     }
 
     for r in CARD_REGEXES.iter() {
-        if let Some(caps) = r.captures(line) {
-            if let Some(m) = caps.get(1) {
-                let h = m
-                    .as_str()
-                    .trim()
-                    .trim_matches(['\'', '"'])
-                    .trim_end_matches(['.', ',']);
-                if is_valid_card_hash(h) {
-                    let mut norm = h.to_string();
-                    if norm.len() == 27 {
-                        norm.push('=');
-                    }
-                    return Some(norm);
+        if let Some(caps) = r.captures(line)
+            && let Some(m) = caps.get(1)
+        {
+            let h = m
+                .as_str()
+                .trim()
+                .trim_matches(['\'', '"'])
+                .trim_end_matches(['.', ',']);
+            if is_valid_card_hash(h) {
+                let mut norm = h.to_string();
+                if norm.len() == 27 {
+                    norm.push('=');
                 }
+                return Some(norm);
             }
         }
     }

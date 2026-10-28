@@ -22,13 +22,28 @@ unsafe extern "system" {
 
 fn generate_uuid_v4() -> String {
     let mut bytes = [0u8; 16];
-    unsafe {
-        let _ = BCryptGenRandom(
+    let status = unsafe {
+        BCryptGenRandom(
             std::ptr::null_mut(),
             bytes.as_mut_ptr(),
             bytes.len() as u32,
             2,
-        );
+        )
+    };
+    if status != 0 {
+        // Keep identifiers unique even if the system RNG is unavailable.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .hash(&mut hasher);
+        std::process::id().hash(&mut hasher);
+        let seed = hasher.finish();
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = (seed >> ((index % 8) * 8)) as u8 ^ (index as u8);
+        }
     }
     bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
     bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
@@ -82,10 +97,15 @@ where
             .map(|(a, b)| (a.as_str(), b.as_str()))
             .collect();
         let tx_log = tx.clone();
-        let res =
-            sync_assets_via_airtraffic_internal(&udid_owned, transport, &refs, worker_cancel, move |msg| {
+        let res = sync_assets_via_airtraffic_internal(
+            &udid_owned,
+            transport,
+            &refs,
+            worker_cancel,
+            move |msg| {
                 let _ = tx_log.send(SyncEvent::Log(msg.to_string()));
-            });
+            },
+        );
         let _ = tx.send(SyncEvent::Done(res));
     });
 
@@ -313,10 +333,10 @@ where
             let name = libs.to_rust_string(name_ref);
             if name == "AssetManifest" {
                 let param = unsafe { (libs.at_cf_message_get_param)(msg, cf_key_manifest.raw) };
-                if !param.is_null() {
-                    if let Ok(bytes) = libs.cf_plist_to_bytes(param) {
-                        manifest_val = plist::Value::from_reader(std::io::Cursor::new(bytes)).ok();
-                    }
+                if !param.is_null()
+                    && let Ok(bytes) = libs.cf_plist_to_bytes(param)
+                {
+                    manifest_val = plist::Value::from_reader(std::io::Cursor::new(bytes)).ok();
                 }
                 unsafe { (libs.cf_release)(msg) };
                 break;
@@ -348,10 +368,8 @@ where
                     .get("IsDownload")
                     .and_then(|b| b.as_boolean())
                     .unwrap_or(false);
-                if is_dl {
-                    if let Some(asset_id) = dict.get("AssetID").and_then(|s| s.as_string()) {
-                        available_downloads.push(asset_id.to_string());
-                    }
+                if is_dl && let Some(asset_id) = dict.get("AssetID").and_then(|s| s.as_string()) {
+                    available_downloads.push(asset_id.to_string());
                 }
             }
         }

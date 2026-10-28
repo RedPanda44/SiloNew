@@ -92,13 +92,11 @@ impl AfcClient {
                 && !val.is_null()
             {
                 if let (Ok(k), Ok(v)) = (CStr::from_ptr(key).to_str(), CStr::from_ptr(val).to_str())
+                    && k == "st_size"
+                    && let Ok(num) = v.parse::<usize>()
                 {
-                    if k == "st_size" {
-                        if let Ok(num) = v.parse::<usize>() {
-                            size = Some(num);
-                            break;
-                        }
-                    }
+                    size = Some(num);
+                    break;
                 }
                 key = ptr::null();
                 val = ptr::null();
@@ -263,10 +261,11 @@ impl AfcClient {
                 if read_status != 0 || entry_ptr.is_null() {
                     break;
                 }
-                if let Ok(name) = CStr::from_ptr(entry_ptr).to_str() {
-                    if name != "." && name != ".." {
-                        entries.push(name.to_owned());
-                    }
+                if let Ok(name) = CStr::from_ptr(entry_ptr).to_str()
+                    && name != "."
+                    && name != ".."
+                {
+                    entries.push(name.to_owned());
                 }
                 entry_ptr = ptr::null();
             }

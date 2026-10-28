@@ -212,7 +212,7 @@ fn pack_stored_zip(entries: Vec<StoredZipEntry>) -> Vec<u8> {
         output.extend_from_slice(&ext_attr.to_le_bytes()); // external attr
         output.extend_from_slice(&offset.to_le_bytes());
         output.extend_from_slice(name_bytes);
-        output.extend_from_slice(&extra);
+        output.extend_from_slice(extra);
     }
 
     let cd_len = (output.len() as u32) - cd_start;
@@ -291,10 +291,10 @@ pub fn restore_books(afc: &AfcClient, snapshot: &BooksSnapshot) -> Result<()> {
                 }
             }
             None => {
-                if afc.exists(path) {
-                    if let Err(e) = afc.remove_path(path) {
-                        errors.push(format!("Restore removal failed for {}: {}", path, e));
-                    }
+                if afc.exists(path)
+                    && let Err(e) = afc.remove_path(path)
+                {
+                    errors.push(format!("Restore removal failed for {}: {}", path, e));
                 }
             }
         }
@@ -427,7 +427,7 @@ mod tests {
         assert_eq!(&archive[0..4], &[0x50, 0x4b, 0x03, 0x04]);
 
         // Verify that SZ_EXTRA_ID 0x5A53 is in the archive
-        let has_extra = archive.windows(2).any(|w| w == &[0x53, 0x5a]);
+        let has_extra = archive.windows(2).any(|w| w == [0x53, 0x5a]);
         assert!(
             has_extra,
             "Must contain Apple StreamingZip extra field 0x5A53"

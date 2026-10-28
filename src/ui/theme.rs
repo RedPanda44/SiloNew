@@ -13,18 +13,13 @@ pub fn strong() -> egui::FontFamily {
 }
 
 /// User-facing appearance selection, persisted in settings.json.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Appearance {
     /// Follow the Windows app theme.
+    #[default]
     System,
     Light,
     Dark,
-}
-
-impl Default for Appearance {
-    fn default() -> Self {
-        Self::System
-    }
 }
 
 impl Appearance {
@@ -237,7 +232,8 @@ pub fn palette(ctx: &egui::Context) -> Palette {
 
 pub fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
     let amount = amount.clamp(0.0, 1.0);
-    let channel = |start: u8, end: u8| (start as f32 + (end as f32 - start as f32) * amount).round() as u8;
+    let channel =
+        |start: u8, end: u8| (start as f32 + (end as f32 - start as f32) * amount).round() as u8;
     Color32::from_rgba_unmultiplied(
         channel(from.r(), to.r()),
         channel(from.g(), to.g()),
@@ -263,9 +259,10 @@ pub fn gradient_rounded(
         let y_mid = rect.min.y + t * rect.height();
         let edge_dist = (y_mid - rect.min.y).min(rect.max.y - y_mid);
         let inset = if edge_dist < radius {
-            radius - (radius * radius - (radius - edge_dist) * (radius - edge_dist))
-                .max(0.0)
-                .sqrt()
+            radius
+                - (radius * radius - (radius - edge_dist) * (radius - edge_dist))
+                    .max(0.0)
+                    .sqrt()
         } else {
             0.0
         };
@@ -322,7 +319,10 @@ pub fn paint_background(ctx: &egui::Context, p: Palette) {
     let glow_alpha = if p.dark { 66 } else { 42 };
     radial_glow(
         &painter,
-        egui::pos2(rect.left() + rect.width() * 0.16, rect.top() + rect.height() * 0.06),
+        egui::pos2(
+            rect.left() + rect.width() * 0.16,
+            rect.top() + rect.height() * 0.06,
+        ),
         span * 0.55,
         Color32::from_rgba_unmultiplied(p.accent.r(), p.accent.g(), p.accent.b(), glow_alpha),
     );
@@ -333,7 +333,10 @@ pub fn paint_background(ctx: &egui::Context, p: Palette) {
     };
     radial_glow(
         &painter,
-        egui::pos2(rect.right() - rect.width() * 0.05, rect.bottom() - rect.height() * 0.05),
+        egui::pos2(
+            rect.right() - rect.width() * 0.05,
+            rect.bottom() - rect.height() * 0.05,
+        ),
         span * 0.5,
         violet,
     );
@@ -443,10 +446,9 @@ pub fn setup_fonts(ctx: &egui::Context) {
             "apple-ui-bold".to_owned(),
             egui::FontData::from_owned(bold_bytes).into(),
         );
-        fonts.families.insert(
-            strong(),
-            vec!["apple-ui-bold".to_owned()],
-        );
+        fonts
+            .families
+            .insert(strong(), vec!["apple-ui-bold".to_owned()]);
     }
 
     // Fallback CJK font for Chinese characters.

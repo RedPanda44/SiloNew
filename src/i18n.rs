@@ -3,36 +3,71 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::device::ConnectionMode;
 use crate::ui::theme::Appearance;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
+    #[default]
     English,
     SimplifiedChinese,
 }
 
-impl Default for Language {
-    fn default() -> Self {
-        Self::English
-    }
-}
-
 impl Language {
     fn detect_from_system() -> Self {
-        let system_locale = std::env::var("LANG")
-            .or_else(|_| std::env::var("LANGUAGE"))
-            .or_else(|_| std::env::var("LC_ALL"))
-            .unwrap_or_default()
-            .to_ascii_lowercase();
+        if let Some(locale) = Self::environment_locale() {
+            return Self::from_locale(&locale);
+        }
+        if let Some(locale) = Self::os_locale() {
+            return Self::from_locale(&locale);
+        }
+        Self::English
+    }
 
-        if system_locale.starts_with("zh") {
+    fn environment_locale() -> Option<String> {
+        for key in ["LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"] {
+            if let Ok(value) = std::env::var(key) {
+                let value = value.trim().to_ascii_lowercase();
+                // "C" and "POSIX" carry no language information; on Windows
+                // they are sometimes set by tooling, so fall through to the
+                // real UI language instead of forcing English.
+                if !value.is_empty() && value != "c" && value != "posix" {
+                    return Some(value);
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(windows)]
+    fn os_locale() -> Option<String> {
+        unsafe extern "system" {
+            fn GetUserDefaultUILanguage() -> u16;
+        }
+        let langid = unsafe { GetUserDefaultUILanguage() };
+        // The low 10 bits are the primary language ID; 0x04 is Chinese.
+        if langid & 0x03ff == 0x0004 {
+            Some("zh".to_string())
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn os_locale() -> Option<String> {
+        None
+    }
+
+    fn from_locale(locale: &str) -> Self {
+        let locale = locale.trim().to_ascii_lowercase();
+        if locale.starts_with("zh") || locale.starts_with("chinese") {
             Self::SimplifiedChinese
         } else {
             Self::English
         }
     }
 
-    pub fn text<'a>(self, source: &'a str) -> &'a str {
+    pub fn text(self, source: &str) -> &str {
         if self == Self::English {
             return source;
         }
@@ -113,6 +148,7 @@ impl Language {
                 "请先连接 iPhone，再读取当前卡面。"
             }
             "Scan a card or enter its card hash first." => "请先扫描卡片或输入卡片 Hash。",
+            "That does not look like a Wallet card hash." => "这看起来不像钱包卡片 Hash。",
             "The selected iPhone is unavailable on this transport." => {
                 "所选 iPhone 当前无法通过此连接方式访问。"
             }
@@ -372,6 +408,8 @@ impl Language {
                 "Apple 仅接受已签名的卡片。添加 Pass Type ID 证书后即可安装到钱包。"
             }
             "Certificate (.p12)" => "证书 (.p12)",
+            "Choose .p12..." => "选择 .p12...",
+            "Choose certificate..." => "选择证书...",
             "Certificate password" => "证书密码",
             "Pass Type ID" => "Pass Type ID",
             "Team ID" => "Team ID",
@@ -401,14 +439,32 @@ impl Language {
     }
 }
 
-/// Persisted preferences: interface language, appearance and keycard settings.
+/// Persisted preferences: interface language, appearance, connection and
+/// keycard settings, plus the passcode-studio target options.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
     pub language: Language,
     #[serde(default)]
     pub appearance: Appearance,
     #[serde(default)]
+    pub connection_mode: ConnectionMode,
+    #[serde(default = "default_telephony_version")]
+    pub forced_telephony_ver: String,
+    #[serde(default = "default_keypad_language")]
+    pub keypad_language: String,
+    #[serde(default)]
+    pub passcode_bold: bool,
+    #[serde(default)]
     pub keycard: crate::keycard::KeycardPrefs,
+}
+
+fn default_telephony_version() -> String {
+    crate::passthm::DEFAULT_TELEPHONY_VERSION.to_string()
+}
+
+fn default_keypad_language() -> String {
+    crate::passthm::DEFAULT_KEYPAD_LANGUAGE.to_string()
 }
 
 impl Default for Settings {
@@ -416,6 +472,10 @@ impl Default for Settings {
         Self {
             language: Language::detect_from_system(),
             appearance: Appearance::default(),
+            connection_mode: ConnectionMode::default(),
+            forced_telephony_ver: default_telephony_version(),
+            keypad_language: default_keypad_language(),
+            passcode_bold: false,
             keycard: crate::keycard::KeycardPrefs::default(),
         }
     }
@@ -424,21 +484,24 @@ impl Default for Settings {
 impl Settings {
     pub fn load() -> Self {
         let path = settings_path();
-        if let Ok(contents) = fs::read_to_string(&path) {
-            if let Ok(settings) = serde_json::from_str::<Settings>(&contents) {
-                return settings;
+        if let Ok(contents) = fs::read_to_string(&path)
+            && let Ok(settings) = serde_json::from_str::<Settings>(&contents)
+        {
+            // Earlier builds stored the certificate password in clear text.
+            // Re-save once so it is protected with DPAPI without waiting for
+            // the user to change another preference.
+            if !settings.keycard.signing.p12_password.is_empty() && !contents.contains("dpapi:") {
+                settings.save();
             }
+            return settings;
         }
         Self::default()
     }
 
     pub fn save(&self) {
         let path = settings_path();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
         if let Ok(contents) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(path, contents);
+            let _ = crate::paths::write_atomic(&path, contents.as_bytes());
         }
     }
 }
@@ -479,6 +542,19 @@ mod tests {
         let settings: Settings = serde_json::from_str(legacy).unwrap();
         assert_eq!(settings.language, Language::SimplifiedChinese);
         assert_eq!(settings.appearance, Appearance::default());
+        assert_eq!(
+            settings.connection_mode,
+            crate::device::ConnectionMode::Auto
+        );
+        assert_eq!(
+            settings.forced_telephony_ver,
+            crate::passthm::DEFAULT_TELEPHONY_VERSION
+        );
+        assert_eq!(
+            settings.keypad_language,
+            crate::passthm::DEFAULT_KEYPAD_LANGUAGE
+        );
+        assert!(!settings.passcode_bold);
     }
 
     #[test]
@@ -492,5 +568,37 @@ mod tests {
         let parsed: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.language, Language::English);
         assert_eq!(parsed.appearance, Appearance::Light);
+    }
+
+    #[test]
+    fn settings_round_trip_preserves_studio_preferences() {
+        let settings = Settings {
+            language: Language::English,
+            connection_mode: crate::device::ConnectionMode::Wifi,
+            forced_telephony_ver: "TelephonyUI-9".to_string(),
+            keypad_language: "Russian".to_string(),
+            passcode_bold: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let parsed: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.connection_mode, crate::device::ConnectionMode::Wifi);
+        assert_eq!(parsed.forced_telephony_ver, "TelephonyUI-9");
+        assert_eq!(parsed.keypad_language, "Russian");
+        assert!(parsed.passcode_bold);
+    }
+
+    #[test]
+    fn locale_detection_recognises_chinese() {
+        assert_eq!(
+            Language::from_locale("zh_CN.UTF-8"),
+            Language::SimplifiedChinese
+        );
+        assert_eq!(
+            Language::from_locale("zh-Hans"),
+            Language::SimplifiedChinese
+        );
+        assert_eq!(Language::from_locale("en_US"), Language::English);
+        assert_eq!(Language::from_locale("de-DE"), Language::English);
     }
 }

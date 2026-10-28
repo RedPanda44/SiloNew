@@ -134,9 +134,7 @@ impl SiloApp {
                             icons::status_dot(ui, p.accent);
                             ui.add(
                                 egui::Label::new(
-                                    egui::RichText::new(line)
-                                        .size(11.0)
-                                        .color(p.text_secondary),
+                                    egui::RichText::new(line).size(11.0).color(p.text_secondary),
                                 )
                                 .wrap(),
                             );
@@ -210,10 +208,7 @@ impl SiloApp {
             },
         );
 
-        let content = Rect::from_min_max(
-            rect.min + vec2(26.0, 22.0),
-            rect.max - vec2(26.0, 22.0),
-        );
+        let content = Rect::from_min_max(rect.min + vec2(26.0, 22.0), rect.max - vec2(26.0, 22.0));
 
         // Left: copy + actions.
         let left_w = (content.width() * 0.58).min(520.0);
@@ -303,10 +298,7 @@ impl SiloApp {
             Color32::from_white_alpha(90),
         );
         painter.rect_filled(
-            Rect::from_min_max(
-                front.left_bottom() - vec2(0.0, 34.0),
-                front.right_bottom(),
-            ),
+            Rect::from_min_max(front.left_bottom() - vec2(0.0, 34.0), front.right_bottom()),
             egui::CornerRadius {
                 nw: 0,
                 ne: 0,
@@ -322,8 +314,10 @@ impl SiloApp {
 fn quick_action_tile(ui: &mut egui::Ui, icon: Icon, label: &str, width: f32) -> bool {
     let p = widgets::pal(ui);
     let height = 62.0;
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(width.min(ui.available_width()), height), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(width.min(ui.available_width()), height),
+        egui::Sense::click(),
+    );
     let painter = ui.painter_at(rect);
     let radius = egui::CornerRadius::same(12);
 
@@ -352,10 +346,7 @@ fn quick_action_tile(ui: &mut egui::Ui, icon: Icon, label: &str, width: f32) -> 
     icons::draw(
         ui,
         Icon::ChevronRight,
-        Rect::from_center_size(
-            pos2(rect.max.x - 16.0, rect.center().y),
-            vec2(14.0, 14.0),
-        ),
+        Rect::from_center_size(pos2(rect.max.x - 16.0, rect.center().y), vec2(14.0, 14.0)),
         p.text_tertiary,
     );
     response.clicked()

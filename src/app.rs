@@ -20,8 +20,8 @@ use crate::keycard::{KeycardPrefs, PassServer};
 use crate::passthm::{PasscodeTheme, parse_passthm_file};
 use crate::scanner::{SavedCard, load_saved_cards, scan_syslog_for_cards};
 use crate::ui::theme::{self, Appearance};
-use crate::ui::{AppTab, icons, widgets};
 use crate::ui::widgets::ButtonKind;
+use crate::ui::{AppTab, icons, widgets};
 use crate::updater::{self, ReleaseInfo};
 use crate::wallet_backup::{backup_exists, load_current_card_artwork};
 
@@ -177,6 +177,7 @@ pub struct SiloApp {
     pub(crate) current_card_hash: String,
     pub(crate) current_card_loading: bool,
     pub(crate) artwork_in_flight_hash: Option<String>,
+    pub(crate) artwork_pending_hash: Option<String>,
     pub(crate) current_card_error: Option<String>,
     pub(crate) card_reveal_started: Option<f64>,
     pub(crate) crop_focus: [f32; 2],
@@ -296,7 +297,7 @@ impl SiloApp {
 
             devices: Vec::new(),
             selected_udid: None,
-            connection_mode: ConnectionMode::Auto,
+            connection_mode: settings.connection_mode,
 
             card_hash: String::new(),
             saved_cards: load_saved_cards(),
@@ -308,6 +309,7 @@ impl SiloApp {
             current_card_hash: String::new(),
             current_card_loading: false,
             artwork_in_flight_hash: None,
+            artwork_pending_hash: None,
             current_card_error: None,
             card_reveal_started: None,
             crop_focus: [0.5, 0.5],
@@ -318,9 +320,9 @@ impl SiloApp {
 
             theme_path: None,
             loaded_theme: None,
-            forced_telephony_ver: "Auto (TelephonyUI-10)".to_string(),
-            keypad_language: "English".to_string(),
-            passcode_bold: false,
+            forced_telephony_ver: settings.forced_telephony_ver.clone(),
+            keypad_language: settings.keypad_language.clone(),
+            passcode_bold: settings.passcode_bold,
             keypad_textures: Vec::new(),
 
             keycard: settings.keycard.clone(),
@@ -388,6 +390,10 @@ impl SiloApp {
         Settings {
             language: self.language,
             appearance: self.appearance,
+            connection_mode: self.connection_mode,
+            forced_telephony_ver: self.forced_telephony_ver.clone(),
+            keypad_language: self.keypad_language.clone(),
+            passcode_bold: self.passcode_bold,
             keycard: self.keycard.clone(),
         }
         .save();
@@ -632,10 +638,11 @@ impl SiloApp {
                 .to_string();
         } else {
             self.status_msg = format!(
-                "{} {} {}",
+                "{} {} {} {}",
                 self.language.text("Found"),
                 self.devices.len(),
-                self.language.text("connected device(s); transport mode:")
+                self.language.text("connected device(s); transport mode:"),
+                self.language.text(self.connection_mode.label())
             );
         }
     }
@@ -837,6 +844,10 @@ impl SiloApp {
             if let Some(flag) = self.scan_stop_flag.take() {
                 flag.store(true, Ordering::Relaxed);
             }
+            // Drop the worker channel too: a late `Done` from the stopped
+            // scan must never be mistaken for the completion of a newer
+            // flash/restore operation.
+            self.task_rx = None;
             self.scanning_syslog = false;
             self.add_log("Syslog scanning stopped by user.");
             self.status_msg = self.language.text("Syslog scanning stopped.").to_string();
@@ -916,7 +927,7 @@ impl SiloApp {
 
         let png_bytes = skin.png.clone();
         let pdf_bytes = skin.pdf.clone();
-        if let Some(ref flag) = self.scan_stop_flag {
+        if let Some(flag) = self.scan_stop_flag.take() {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.scanning_syslog = false;
@@ -1001,7 +1012,7 @@ impl SiloApp {
             return;
         }
 
-        if let Some(ref flag) = self.scan_stop_flag {
+        if let Some(flag) = self.scan_stop_flag.take() {
             flag.store(true, Ordering::Relaxed);
         }
         self.scanning_syslog = false;
@@ -1221,6 +1232,14 @@ impl SiloApp {
             );
             return;
         }
+        if !crate::scanner::is_valid_card_hash(&hash) {
+            self.current_card_error = Some(
+                self.language
+                    .text("That does not look like a Wallet card hash.")
+                    .to_string(),
+            );
+            return;
+        }
         if !self.selected_transport_available() {
             self.current_card_error = Some(
                 self.language
@@ -1230,20 +1249,25 @@ impl SiloApp {
             return;
         }
 
-        // Serialize artwork reads: never stack a second request for the same
-        // card while one is in flight. Every read performs a device AirTraffic
-        // sync, and repeated concurrent syncs crash the iPhone's `atc` daemon
-        // and exhaust short-lived TCP connections.
-        if self.artwork_in_flight_hash.as_deref() == Some(hash.as_str()) {
-            return;
-        }
-        self.artwork_in_flight_hash = Some(hash.clone());
-
+        // Serialize artwork reads: never stack a second request while one is in
+        // flight. Every read performs a device AirTraffic sync, and repeated
+        // concurrent syncs crash the iPhone's `atc` daemon and exhaust
+        // short-lived TCP connections. A request for a different card is
+        // queued and started as soon as the current one finishes.
         self.current_card_hash = hash.clone();
         self.current_card_texture = None;
         self.current_card_error = None;
         self.current_card_loading = true;
         self.card_reveal_started = None;
+
+        if self.artwork_in_flight_hash.as_deref() == Some(hash.as_str()) {
+            return;
+        }
+        if self.artwork_in_flight_hash.is_some() {
+            self.artwork_pending_hash = Some(hash);
+            return;
+        }
+        self.artwork_in_flight_hash = Some(hash.clone());
 
         let connection_mode = self.connection_mode;
         let tx = self.artwork_tx.clone();
@@ -1267,7 +1291,10 @@ impl SiloApp {
                 .to_ascii_lowercase();
             match ext.as_str() {
                 "png" | "jpg" | "jpeg" | "webp" => {
-                    self.add_log(format!("Artwork dropped into workspace: {}", path.display()));
+                    self.add_log(format!(
+                        "Artwork dropped into workspace: {}",
+                        path.display()
+                    ));
                     self.current_tab = AppTab::Wallet;
                     self.load_skin_from_path(ctx, &path);
                 }
@@ -1342,8 +1369,8 @@ impl SiloApp {
                     if self.artwork_in_flight_hash.as_deref() == Some(hash.as_str()) {
                         self.artwork_in_flight_hash = None;
                     }
-                    self.current_card_loading = false;
                     if hash == self.current_card_hash && hash == self.card_hash.trim() {
+                        self.current_card_loading = false;
                         match result {
                             Ok(bytes) => match image::load_from_memory(&bytes) {
                                 Ok(image) => {
@@ -1398,6 +1425,12 @@ impl SiloApp {
                 }
             }
         }
+        if self.artwork_in_flight_hash.is_none()
+            && let Some(pending) = self.artwork_pending_hash.take()
+            && pending == self.card_hash.trim()
+        {
+            self.request_current_card_artwork();
+        }
         if finished {
             self.task_rx = None;
         }
@@ -1419,8 +1452,7 @@ impl SiloApp {
                     // Brand badge.
                     ui.horizontal(|ui| {
                         let badge = egui::vec2(36.0, 36.0);
-                        let (rect, _) =
-                            ui.allocate_exact_size(badge, egui::Sense::hover());
+                        let (rect, _) = ui.allocate_exact_size(badge, egui::Sense::hover());
                         let painter = ui.painter_at(rect);
                         theme::gradient_rounded(
                             &painter,
@@ -1709,7 +1741,11 @@ impl SiloApp {
                             })
                             .family(theme::strong())
                             .size(11.0)
-                            .color(if connected { p.success } else { p.text_secondary }),
+                            .color(if connected {
+                                p.success
+                            } else {
+                                p.text_secondary
+                            }),
                         )
                         .on_hover_text(&self.apple_status);
                     });
@@ -1809,20 +1845,30 @@ impl SiloApp {
                             false,
                         )
                         .clicked()
-                        {
-                            if let Some(path) = rfd::FileDialog::new()
+                            && let Some(path) = rfd::FileDialog::new()
                                 .set_file_name("silo-diagnostics.log")
                                 .add_filter("Log files", &["log", "txt"])
                                 .save_file()
-                            {
-                                let content = self.logs.join("\r\n");
-                                let _ = std::fs::write(&path, content);
-                                file_saved_msg =
-                                    Some(format!("Saved log file to {}", path.display()));
-                            }
+                        {
+                            let content = self.logs.join("\r\n");
+                            file_saved_msg = Some(match std::fs::write(&path, content) {
+                                Ok(()) => format!("Saved log file to {}", path.display()),
+                                Err(error) => {
+                                    format!(
+                                        "Could not save log file to {}: {error}",
+                                        path.display()
+                                    )
+                                }
+                            });
                         }
-                        if widgets::button(ui, language.text("Clear"), ButtonKind::Quiet, true, false)
-                            .clicked()
+                        if widgets::button(
+                            ui,
+                            language.text("Clear"),
+                            ButtonKind::Quiet,
+                            true,
+                            false,
+                        )
+                        .clicked()
                         {
                             self.logs.clear();
                         }
@@ -1887,7 +1933,10 @@ impl eframe::App for SiloApp {
         // cards and status bar all blend over the gradient.
         theme::paint_background(ctx, theme::palette(ctx));
 
-        if self.is_busy || self.scanning_syslog || self.current_card_loading || self.update_rx.is_some()
+        if self.is_busy
+            || self.scanning_syslog
+            || self.current_card_loading
+            || self.update_rx.is_some()
         {
             ctx.request_repaint();
         }

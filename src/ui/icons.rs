@@ -76,31 +76,6 @@ fn moon_arcs(center: Pos2, radius: f32) -> (Vec<Pos2>, Vec<Pos2>) {
     (outer, inner)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn moon_arcs_form_a_concave_crescent() {
-        let (outer, inner) = moon_arcs(Pos2::ZERO, 6.0);
-        assert_eq!(outer.len(), inner.len());
-        let dist = |p: Pos2| (p.x * p.x + p.y * p.y).sqrt();
-        // Outer arc sits on the circle; inner arc is the bite.
-        let max_d = outer.iter().map(|p| dist(*p)).fold(0.0_f32, f32::max);
-        assert!((max_d - 6.0).abs() < 0.01, "max {max_d}");
-        let min_d = inner.iter().map(|p| dist(*p)).fold(f32::MAX, f32::min);
-        assert!(min_d < 3.0, "min {min_d} - crescent is too shallow");
-        // Tips are shared: both arcs start and end at the same points.
-        assert!((outer[0] - inner[0]).length() < 0.01, "tips must meet");
-        assert!(
-            (*outer.last().unwrap() - *inner.last().unwrap()).length() < 0.01,
-            "tips must meet"
-        );
-        // And the shared tips lie exactly on the outer circle.
-        assert!((dist(outer[0]) - 6.0).abs() < 0.01);
-    }
-}
-
 /// Draw `icon` centered inside `rect`.
 pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
     let painter = ui.painter_at(rect);
@@ -124,7 +99,10 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
                 stroke,
             )));
             painter.rect_stroke(
-                Rect::from_center_size(pos2(center.x, center.y + r * 0.28), vec2(s * 0.62, s * 0.44)),
+                Rect::from_center_size(
+                    pos2(center.x, center.y + r * 0.28),
+                    vec2(s * 0.62, s * 0.44),
+                ),
                 2.0,
                 stroke,
                 egui::StrokeKind::Inside,
@@ -135,10 +113,7 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
             painter.rect_stroke(rect_card, s * 0.1, stroke, egui::StrokeKind::Inside);
             let band_y = rect_card.min.y + s * 0.17;
             painter.line_segment(
-                [
-                    pos2(rect_card.min.x, band_y),
-                    pos2(rect_card.max.x, band_y),
-                ],
+                [pos2(rect_card.min.x, band_y), pos2(rect_card.max.x, band_y)],
                 stroke,
             );
             painter.circle_filled(
@@ -164,11 +139,7 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
                     [pos2(center.x - r, y), pos2(center.x + r, y)],
                     egui::Stroke::new(stroke.width * 0.8, color),
                 );
-                painter.circle_filled(
-                    pos2(center.x - r + knob * 2.0 * r, y),
-                    s * 0.085,
-                    color,
-                );
+                painter.circle_filled(pos2(center.x - r + knob * 2.0 * r, y), s * 0.085, color);
             }
         }
         Icon::Help => {
@@ -215,7 +186,8 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
                 for i in 0..(n - 1) as u32 {
                     let a = i * 2;
                     // (outer i, outer i+1, inner i) + (inner i, outer i+1, inner i+1)
-                    mesh.indices.extend_from_slice(&[a, a + 2, a + 1, a + 1, a + 2, a + 3]);
+                    mesh.indices
+                        .extend_from_slice(&[a, a + 2, a + 1, a + 1, a + 2, a + 3]);
                 }
                 painter.add(egui::Shape::Mesh(std::sync::Arc::new(mesh)));
             }
@@ -271,10 +243,7 @@ pub fn draw(ui: &egui::Ui, icon: Icon, rect: Rect, color: Color32) {
             // Down arrow into a tray: the classic "get update" glyph.
             let top = center.y - r * 0.95;
             let tip = center.y + r * 0.28;
-            painter.line_segment(
-                [pos2(center.x, top), pos2(center.x, tip)],
-                stroke,
-            );
+            painter.line_segment([pos2(center.x, top), pos2(center.x, tip)], stroke);
             painter.add(egui::Shape::Path(egui::epaint::PathShape::line(
                 vec![
                     pos2(center.x - r * 0.46, tip - r * 0.5),
@@ -342,4 +311,29 @@ pub fn status_dot_pulsing(ui: &mut egui::Ui, color: Color32) {
     painter.circle_filled(c, 3.5, color);
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(33));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moon_arcs_form_a_concave_crescent() {
+        let (outer, inner) = moon_arcs(Pos2::ZERO, 6.0);
+        assert_eq!(outer.len(), inner.len());
+        let dist = |p: Pos2| (p.x * p.x + p.y * p.y).sqrt();
+        // Outer arc sits on the circle; inner arc is the bite.
+        let max_d = outer.iter().map(|p| dist(*p)).fold(0.0_f32, f32::max);
+        assert!((max_d - 6.0).abs() < 0.01, "max {max_d}");
+        let min_d = inner.iter().map(|p| dist(*p)).fold(f32::MAX, f32::min);
+        assert!(min_d < 3.0, "min {min_d} - crescent is too shallow");
+        // Tips are shared: both arcs start and end at the same points.
+        assert!((outer[0] - inner[0]).length() < 0.01, "tips must meet");
+        assert!(
+            (*outer.last().unwrap() - *inner.last().unwrap()).length() < 0.01,
+            "tips must meet"
+        );
+        // And the shared tips lie exactly on the outer circle.
+        assert!((dist(outer[0]) - 6.0).abs() < 0.01);
+    }
 }

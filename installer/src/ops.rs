@@ -27,21 +27,42 @@ pub enum Msg {
     Failed(String),
 }
 
-/// Default per-user install location (no admin rights required).
-pub fn default_install_dir() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA")
-        .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
-    PathBuf::from(base).join("Programs").join("Silo")
+/// Resolve the current user's local app-data folder. Avoids hard-coding
+/// `C:\Users\Default`, which belongs to another profile and may not be
+/// writable when `LOCALAPPDATA` is missing.
+fn local_app_data_dir() -> PathBuf {
+    if let Ok(value) = std::env::var("LOCALAPPDATA") {
+        let value = value.trim();
+        if !value.is_empty() {
+            return PathBuf::from(value);
+        }
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        let profile = profile.trim();
+        if !profile.is_empty() {
+            return PathBuf::from(profile).join("AppData").join("Local");
+        }
+    }
+    std::env::temp_dir()
 }
 
-/// Where to uninstall from: this exe's folder when it sits next to `silo.exe`
-/// (i.e. we run as the installed `uninstall.exe`), otherwise the default path.
+/// Default per-user install location (no admin rights required).
+pub fn default_install_dir() -> PathBuf {
+    local_app_data_dir().join("Programs").join("Silo")
+}
+
+/// Where to uninstall from: this exe's folder when it runs as the installed
+/// `uninstall.exe` (or sits next to `silo.exe`), otherwise the default path.
 pub fn uninstall_source_dir() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            if dir.join(APP_EXE).exists() {
-                return dir.to_path_buf();
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let is_uninstaller = exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(UNINSTALL_EXE));
+        if is_uninstaller || dir.join(APP_EXE).exists() {
+            return dir.to_path_buf();
         }
     }
     default_install_dir()
@@ -83,7 +104,11 @@ fn run_ps(script: &str) -> Result<(), String> {
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
             let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
             let msg = if !stderr.is_empty() { stderr } else { stdout };
-            Err(if msg.is_empty() { "PowerShell failed".into() } else { msg })
+            Err(if msg.is_empty() {
+                "PowerShell failed".into()
+            } else {
+                msg
+            })
         }
         Err(e) => Err(format!("could not run PowerShell: {e}")),
     }
@@ -114,9 +139,7 @@ Make-Shortcut ([Environment]::GetFolderPath('Programs')) 'Silo.lnk'
 "#
     );
     if desktop {
-        script.push_str(
-            "Make-Shortcut ([Environment]::GetFolderPath('Desktop')) 'Silo.lnk'\n",
-        );
+        script.push_str("Make-Shortcut ([Environment]::GetFolderPath('Desktop')) 'Silo.lnk'\n");
     }
     script
 }
@@ -170,7 +193,12 @@ fn cleanup_temp(dir: &Path) {
 // Install
 // ---------------------------------------------------------------------------
 
-pub fn start_install(dir: PathBuf, desktop_shortcut: bool, payload: &'static [u8], tx: Sender<Msg>) {
+pub fn start_install(
+    dir: PathBuf,
+    desktop_shortcut: bool,
+    payload: &'static [u8],
+    tx: Sender<Msg>,
+) {
     std::thread::spawn(move || {
         if let Err(e) = install(&dir, desktop_shortcut, payload, &tx) {
             cleanup_temp(&dir);
@@ -179,7 +207,12 @@ pub fn start_install(dir: PathBuf, desktop_shortcut: bool, payload: &'static [u8
     });
 }
 
-fn install(dir: &Path, desktop_shortcut: bool, payload: &[u8], tx: &Sender<Msg>) -> Result<(), String> {
+fn install(
+    dir: &Path,
+    desktop_shortcut: bool,
+    payload: &[u8],
+    tx: &Sender<Msg>,
+) -> Result<(), String> {
     send(tx, 0.02, "Preparing…");
     sleep(350);
 
@@ -209,17 +242,36 @@ fn install(dir: &Path, desktop_shortcut: bool, payload: &[u8], tx: &Sender<Msg>)
         }
         file.flush().map_err(|e| format!("Write failed: {e}"))?;
     }
-    fs::rename(&tmp, dir.join(APP_EXE)).map_err(|e| {
-        format!(
-            "Could not replace {dir}\\{APP_EXE}: {e}. Close Silo and try again.",
+    // The previous build may still be releasing its file lock right after
+    // taskkill, so retry the replacement for a few seconds instead of failing
+    // the whole installation immediately.
+    let target_exe = dir.join(APP_EXE);
+    let mut last_error = None;
+    for attempt in 0..20 {
+        match fs::rename(&tmp, &target_exe) {
+            Ok(()) => {
+                last_error = None;
+                break;
+            }
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < 19 {
+                    sleep(250);
+                }
+            }
+        }
+    }
+    if let Some(error) = last_error {
+        return Err(format!(
+            "Could not replace {dir}\\{APP_EXE}: {error}. Close Silo and try again.",
             dir = dir.display()
-        )
-    })?;
+        ));
+    }
     sleep(300);
 
     send(tx, 0.72, "Installing uninstaller…");
-    let self_exe = std::env::current_exe()
-        .map_err(|e| format!("Could not locate this installer: {e}"))?;
+    let self_exe =
+        std::env::current_exe().map_err(|e| format!("Could not locate this installer: {e}"))?;
     fs::copy(&self_exe, dir.join(UNINSTALL_EXE))
         .map_err(|e| format!("Could not install uninstaller: {e}"))?;
     sleep(350);
@@ -270,9 +322,11 @@ fn uninstall(dir: &Path, remove_data: bool, tx: &Sender<Msg>) -> Result<(), Stri
 
     if remove_data {
         send(tx, 0.68, "Deleting settings, cards and backups…");
-        if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            let _ = fs::remove_dir_all(PathBuf::from(base).join("Silo"));
-        }
+        let base = local_app_data_dir();
+        let _ = fs::remove_dir_all(base.join("Silo"));
+        // The pre-rename data folder may still exist if migration copied
+        // rather than moved it.
+        let _ = fs::remove_dir_all(base.join("AirCard"));
         sleep(350);
     }
 

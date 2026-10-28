@@ -20,6 +20,7 @@ impl SiloApp {
             self.current_card_texture = None;
             self.current_card_loading = false;
             self.current_card_error = None;
+            self.artwork_pending_hash = None;
             self.current_card_name = self
                 .saved_cards
                 .iter()
@@ -33,11 +34,7 @@ impl SiloApp {
             let (rect, _) =
                 ui.allocate_exact_size(vec2(ui.available_width(), 62.0), egui::Sense::hover());
             let painter = ui.painter_at(rect);
-            painter.rect_filled(
-                rect,
-                egui::CornerRadius::same(14),
-                p.accent_soft,
-            );
+            painter.rect_filled(rect, egui::CornerRadius::same(14), p.accent_soft);
             painter.rect_stroke(
                 rect,
                 egui::CornerRadius::same(14),
@@ -487,8 +484,8 @@ impl SiloApp {
                         .source_image
                         .as_ref()
                         .map(|image| (image.width(), image.height()));
-                    if response.dragged() {
-                        if let Some((source_width, source_height)) = source_dimensions {
+                    if response.dragged()
+                        && let Some((source_width, source_height)) = source_dimensions {
                             let crop_uv = crop_uv_for_card(
                                 source_width,
                                 source_height,
@@ -512,7 +509,6 @@ impl SiloApp {
                             self.crop_dirty = true;
                             ctx.request_repaint();
                         }
-                    }
                     if response.drag_stopped() && self.crop_dirty {
                         self.rebuild_skin_from_source();
                     }

@@ -30,10 +30,7 @@ impl SiloApp {
                     self.set_appearance(Appearance::from_index(idx), ctx);
                 }
                 ui.add_space(8.0);
-                widgets::caption(
-                    ui,
-                    language.text("System follows the Windows theme."),
-                );
+                widgets::caption(ui, language.text("System follows the Windows theme."));
 
                 ui.add_space(16.0);
                 widgets::hairline(ui);
@@ -45,10 +42,7 @@ impl SiloApp {
                     language.text("Language preference is saved on this PC."),
                 );
                 ui.add_space(12.0);
-                widgets::section_header(
-                    ui,
-                    &language.text("Interface language").to_uppercase(),
-                );
+                widgets::section_header(ui, &language.text("Interface language").to_uppercase());
                 ui.add_space(4.0);
                 let mut next_language = self.language;
                 egui::ComboBox::from_id_salt("settings_language")
@@ -92,15 +86,9 @@ impl SiloApp {
             widgets::card(&mut cols[1], |ui| {
                 widgets::heading(ui, language.text("Connection"));
                 ui.add_space(2.0);
-                widgets::caption(
-                    ui,
-                    language.text("Choose how Silo talks to your iPhone."),
-                );
+                widgets::caption(ui, language.text("Choose how Silo talks to your iPhone."));
                 ui.add_space(12.0);
-                widgets::section_header(
-                    ui,
-                    &language.text("Preferred transport").to_uppercase(),
-                );
+                widgets::section_header(ui, &language.text("Preferred transport").to_uppercase());
                 ui.add_space(4.0);
                 let controls_enabled = !self.is_busy && !self.scanning_syslog;
                 let mut next_mode = self.connection_mode;
@@ -129,10 +117,7 @@ impl SiloApp {
                     );
                 }
                 ui.add_space(10.0);
-                widgets::caption(
-                    ui,
-                    language.text("Devices are detected automatically."),
-                );
+                widgets::caption(ui, language.text("Devices are detected automatically."));
             });
         });
     }

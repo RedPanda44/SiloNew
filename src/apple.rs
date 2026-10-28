@@ -443,12 +443,10 @@ impl AppleLibraries {
                 max_bytes,
                 K_CFSTRING_ENCODING_UTF8,
             ) != 0
-            {
-                if let Ok(c_str) =
+                && let Ok(c_str) =
                     CStr::from_ptr(buffer.as_ptr() as *const std::ffi::c_char).to_str()
-                {
-                    return c_str.to_owned();
-                }
+            {
+                return c_str.to_owned();
             }
         }
         String::new()

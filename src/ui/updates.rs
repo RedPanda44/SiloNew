@@ -177,10 +177,7 @@ impl SiloApp {
                     if !info.notes.trim().is_empty() {
                         ui.add_space(16.0);
                         widgets::hairline(ui);
-                        widgets::section_header(
-                            ui,
-                            &language.text("Release notes").to_uppercase(),
-                        );
+                        widgets::section_header(ui, &language.text("Release notes").to_uppercase());
                         ui.add_space(6.0);
                         ui.label(
                             egui::RichText::new(info.notes.trim())

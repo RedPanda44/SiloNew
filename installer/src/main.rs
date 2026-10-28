@@ -73,9 +73,10 @@ fn setup_fonts(ctx: &egui::Context) {
     for candidate in ["segoeuib.ttf", "seguisb.ttf"] {
         let path = fonts_dir.join(candidate);
         if let Ok(bytes) = std::fs::read(&path) {
-            fonts
-                .font_data
-                .insert("strong-bold".to_owned(), egui::FontData::from_owned(bytes).into());
+            fonts.font_data.insert(
+                "strong-bold".to_owned(),
+                egui::FontData::from_owned(bytes).into(),
+            );
             fonts
                 .families
                 .insert(strong.clone(), vec!["strong-bold".to_owned()]);

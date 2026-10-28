@@ -6,13 +6,13 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use egui::{
-    Align2, Color32, FontFamily, FontId, Id, Pos2, Rect, Response, Sense, Stroke, StrokeKind,
-    pos2, vec2,
+    Align2, Color32, FontFamily, FontId, Id, Pos2, Rect, Response, Sense, Stroke, StrokeKind, pos2,
+    vec2,
 };
 
+use crate::VERSION;
 use crate::ops::{self, Msg};
 use crate::theme as t;
-use crate::VERSION;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Op {
@@ -54,8 +54,16 @@ pub struct InstallerApp {
 
 impl InstallerApp {
     pub fn new(uninstall: bool) -> Self {
-        let mode = if uninstall { Op::Uninstall } else { Op::Install };
-        let page = if uninstall { Page::Confirm } else { Page::Welcome };
+        let mode = if uninstall {
+            Op::Uninstall
+        } else {
+            Op::Install
+        };
+        let page = if uninstall {
+            Page::Confirm
+        } else {
+            Page::Welcome
+        };
         let install_dir = if uninstall {
             ops::uninstall_source_dir()
         } else {
@@ -152,7 +160,21 @@ impl InstallerApp {
             Page::Finished => {
                 if self.launch_after {
                     let exe = self.install_dir.join(ops::APP_EXE);
-                    let _ = Command::new(exe).spawn();
+                    if !exe.is_file() {
+                        self.error = format!(
+                            "Silo was installed but its executable could not be found at {}",
+                            exe.display()
+                        );
+                        self.pop_at = time;
+                        self.set_page(Page::Failed, time);
+                        return;
+                    }
+                    if let Err(error) = Command::new(&exe).spawn() {
+                        self.error = format!("Could not launch {}: {error}", exe.display());
+                        self.pop_at = time;
+                        self.set_page(Page::Failed, time);
+                        return;
+                    }
                 }
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -264,10 +286,8 @@ impl InstallerApp {
             Stroke::new(1.0_f32, t::HAIRLINE),
         );
 
-        let badge = Rect::from_min_size(
-            pos2(rect.min.x + 2.0, rect.min.y + 15.0),
-            vec2(42.0, 42.0),
-        );
+        let badge =
+            Rect::from_min_size(pos2(rect.min.x + 2.0, rect.min.y + 15.0), vec2(42.0, 42.0));
 
         // Breathing ambient glow behind the badge.
         let wave = 0.5 + 0.5 * ((time as f32) * 1.5).sin();
@@ -316,11 +336,7 @@ impl InstallerApp {
         );
         ui.add_space(14.0);
 
-        ui.label(
-            egui::RichText::new("Install to")
-                .size(12.0)
-                .color(t::DIM),
-        );
+        ui.label(egui::RichText::new("Install to").size(12.0).color(t::DIM));
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let browse_w = 78.0;
@@ -342,26 +358,37 @@ impl InstallerApp {
                 t::TEXT,
             );
             ui.add_space(10.0);
-            if button(ui, "Browse…", Kind::Secondary, true, browse_w).clicked() {
-                if let Some(dir) = rfd::FileDialog::new()
+            if button(ui, "Browse…", Kind::Secondary, true, browse_w).clicked()
+                && let Some(dir) = rfd::FileDialog::new()
                     .set_directory(&self.install_dir)
                     .pick_folder()
-                {
-                    self.install_dir = dir;
-                }
+            {
+                self.install_dir = dir;
             }
         });
         ui.add_space(14.0);
 
         let mut desktop = self.desktop_shortcut;
-        if checkbox(ui, Id::new("cb-desktop"), &mut desktop, "Create a desktop shortcut", true)
-            .changed()
+        if checkbox(
+            ui,
+            Id::new("cb-desktop"),
+            &mut desktop,
+            "Create a desktop shortcut",
+            true,
+        )
+        .changed()
         {
             self.desktop_shortcut = desktop;
         }
         let mut launch = self.launch_after;
-        if checkbox(ui, Id::new("cb-launch"), &mut launch, "Launch Silo when setup finishes", true)
-            .changed()
+        if checkbox(
+            ui,
+            Id::new("cb-launch"),
+            &mut launch,
+            "Launch Silo when setup finishes",
+            true,
+        )
+        .changed()
         {
             self.launch_after = launch;
         }
@@ -404,16 +431,17 @@ impl InstallerApp {
         progress_bar(ui, self.progress_shown, now);
 
         ui.add_space(8.0);
-        let (row, _) = ui.allocate_exact_size(
-            vec2(ui.available_width(), 16.0),
-            Sense::hover(),
-        );
+        let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
         let painter = ui.painter_at(row);
         painter.text(
             row.min + vec2(0.0, row.height() / 2.0),
             Align2::LEFT_CENTER,
             match self.active_op {
-                Op::Install => format!("{}  →  {}", t::truncate_middle(&self.install_dir.to_string_lossy(), 42), ops::APP_EXE),
+                Op::Install => format!(
+                    "{}  →  {}",
+                    t::truncate_middle(&self.install_dir.to_string_lossy(), 42),
+                    ops::APP_EXE
+                ),
                 Op::Uninstall => t::truncate_middle(&self.install_dir.to_string_lossy(), 56),
             },
             FontId::monospace(11.0),
@@ -440,7 +468,15 @@ impl InstallerApp {
         ui.add_space(18.0);
 
         let mut launch = self.launch_after;
-        if checkbox(ui, Id::new("cb-finish"), &mut launch, "Launch Silo now", true).changed() {
+        if checkbox(
+            ui,
+            Id::new("cb-finish"),
+            &mut launch,
+            "Launch Silo now",
+            true,
+        )
+        .changed()
+        {
             self.launch_after = launch;
         }
         ui.add_space(10.0);
@@ -619,24 +655,48 @@ fn button(ui: &mut egui::Ui, label: &str, kind: Kind, enabled: bool, width: f32)
         0.0
     };
     let press_t = if enabled {
-        ctx.animate_bool_responsive(response.id.with("press"), response.is_pointer_button_down_on())
+        ctx.animate_bool_responsive(
+            response.id.with("press"),
+            response.is_pointer_button_down_on(),
+        )
     } else {
         0.0
     };
 
     let painter = ui.painter_at(rect);
     let radius = egui::CornerRadius::same(9);
-    let text_font = FontId::new(13.0, if matches!(kind, Kind::Primary) { strong_family() } else { FontFamily::Proportional });
+    let text_font = FontId::new(
+        13.0,
+        if matches!(kind, Kind::Primary) {
+            strong_family()
+        } else {
+            FontFamily::Proportional
+        },
+    );
 
     match kind {
         Kind::Primary => {
-            let base = if enabled { t::ACCENT } else { t::fade(t::ACCENT, 0.38) };
+            let base = if enabled {
+                t::ACCENT
+            } else {
+                t::fade(t::ACCENT, 0.38)
+            };
             let hover_col = if enabled { t::ACCENT_HOVER } else { base };
             let mut fill = t::mix(base, hover_col, hover_t);
             fill = t::mix(fill, Color32::from_rgb(0, 90, 200), 0.25 * press_t);
             painter.rect_filled(rect, radius, fill);
-            let text_col = if enabled { Color32::WHITE } else { Color32::from_white_alpha(160) };
-            painter.text(rect.center(), Align2::CENTER_CENTER, label, text_font, text_col);
+            let text_col = if enabled {
+                Color32::WHITE
+            } else {
+                Color32::from_white_alpha(160)
+            };
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                text_font,
+                text_col,
+            );
         }
         Kind::Secondary => {
             let hover_fill = if enabled {
@@ -653,33 +713,38 @@ fn button(ui: &mut egui::Ui, label: &str, kind: Kind, enabled: bool, width: f32)
             if fill.a() > 0 {
                 painter.rect_filled(rect, radius, fill);
             }
-            painter.rect_stroke(rect, radius, Stroke::new(1.0_f32, border), StrokeKind::Inside);
-            let text_col = if enabled { t::TEXT } else { t::fade(t::TEXT, 0.4) };
-            painter.text(rect.center(), Align2::CENTER_CENTER, label, text_font, text_col);
+            painter.rect_stroke(
+                rect,
+                radius,
+                Stroke::new(1.0_f32, border),
+                StrokeKind::Inside,
+            );
+            let text_col = if enabled {
+                t::TEXT
+            } else {
+                t::fade(t::TEXT, 0.4)
+            };
+            painter.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                text_font,
+                text_col,
+            );
         }
     }
     response
 }
 
 /// Animated checkbox row; the whole row is clickable.
-fn checkbox(
-    ui: &mut egui::Ui,
-    id: Id,
-    checked: &mut bool,
-    label: &str,
-    enabled: bool,
-) -> Response {
-    let (rect, mut response) = ui.allocate_exact_size(
-        vec2(ui.available_width(), 26.0),
-        Sense::click(),
-    );
+fn checkbox(ui: &mut egui::Ui, id: Id, checked: &mut bool, label: &str, enabled: bool) -> Response {
+    let (rect, mut response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
     if enabled && response.clicked() {
         *checked = !*checked;
         response.mark_changed();
     }
-    let t_anim = ui
-        .ctx()
-        .animate_bool_responsive(id, *checked && enabled);
+    let t_anim = ui.ctx().animate_bool_responsive(id, *checked && enabled);
 
     let side = 17.0;
     let box_rect = Rect::from_center_size(
@@ -689,11 +754,7 @@ fn checkbox(
     let painter = ui.painter_at(rect);
 
     let fill = t::mix(Color32::TRANSPARENT, t::ACCENT, t_anim);
-    let border = t::mix(
-        t::BORDER,
-        t::ACCENT,
-        if enabled { t_anim } else { 0.0 },
-    );
+    let border = t::mix(t::BORDER, t::ACCENT, if enabled { t_anim } else { 0.0 });
     painter.rect_filled(box_rect, egui::CornerRadius::same(5), fill);
     painter.rect_stroke(
         box_rect,
@@ -711,7 +772,8 @@ fn checkbox(
         let p3 = pos2(c.x + 5.0, c.y - 3.8);
         let u1 = (u * 2.0).clamp(0.0, 1.0);
         let u2 = (u * 2.0 - 1.0).clamp(0.0, 1.0);
-        let lerp = |a: Pos2, b: Pos2, k: f32| Pos2::new(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
+        let lerp =
+            |a: Pos2, b: Pos2, k: f32| Pos2::new(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k);
         painter.line_segment([p1, lerp(p1, p2, u1)], Stroke::new(2.0_f32, Color32::WHITE));
         if u2 > 0.0 {
             painter.line_segment([p2, lerp(p2, p3, u2)], Stroke::new(2.0_f32, Color32::WHITE));
@@ -724,26 +786,25 @@ fn checkbox(
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(13.0),
-        t::mix(label_col, t::ACCENT, if enabled { hover_t(&response) * 0.25 } else { 0.0 }),
+        t::mix(
+            label_col,
+            t::ACCENT,
+            if enabled {
+                hover_t(&response) * 0.25
+            } else {
+                0.0
+            },
+        ),
     );
     response
 }
 
 fn hover_t(response: &Response) -> f32 {
-    if response.hovered() {
-        1.0
-    } else {
-        0.0
-    }
+    if response.hovered() { 1.0 } else { 0.0 }
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .size(16.0)
-            .color(t::TEXT)
-            .strong(),
-    );
+    ui.label(egui::RichText::new(text).size(16.0).color(t::TEXT).strong());
 }
 
 fn progress_bar(ui: &mut egui::Ui, value: f32, time: f64) {
@@ -759,11 +820,8 @@ fn progress_bar(ui: &mut egui::Ui, value: f32, time: f64) {
         // Sweeping highlight for a lively feel.
         let cycle = ((time as f32) * 0.75) % 1.0;
         let x = fill.min.x + cycle * (fill.width() + 80.0) - 40.0;
-        let band = Rect::from_min_max(
-            pos2(x, fill.min.y),
-            pos2(x + 18.0, fill.max.y),
-        )
-        .intersect(fill);
+        let band =
+            Rect::from_min_max(pos2(x, fill.min.y), pos2(x + 18.0, fill.max.y)).intersect(fill);
         if band.width() > 1.0 {
             painter.rect_filled(band, 0.0, Color32::from_white_alpha(64));
         }
@@ -863,7 +921,7 @@ fn draw_logo(painter: &egui::Painter, rect: Rect) {
     let angle: f32 = -12f32.to_radians();
     let (s, co) = angle.sin_cos();
     let half = vec2(8.7 * k, 6.3 * k);
-    let back_center = c + vec2(0.0, -1.0 * k);
+    let back_center = c + vec2(0.0, -k);
     let back: Vec<Pos2> = [
         vec2(-half.x, -half.y),
         vec2(half.x, -half.y),
@@ -884,8 +942,7 @@ fn draw_logo(painter: &egui::Painter, rect: Rect) {
         fill: Color32::from_white_alpha(125),
         stroke: Stroke::NONE.into(),
     }));
-    let front =
-        Rect::from_center_size(c + vec2(0.0, 1.0 * k), vec2(19.0 * k, 13.5 * k));
+    let front = Rect::from_center_size(c + vec2(0.0, 1.0 * k), vec2(19.0 * k, 13.5 * k));
     painter.rect_filled(
         front,
         egui::CornerRadius::same((3.0 * k) as u8),

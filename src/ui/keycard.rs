@@ -77,11 +77,10 @@ impl SiloApp {
                 ui.add_space(8.0);
                 let signing = &mut self.keycard.signing;
                 p12_row(ui, language, &mut signing.p12_path);
-                text_field(
+                password_field(
                     ui,
                     language.text("Certificate password"),
                     &mut signing.p12_password,
-                    "",
                 );
                 text_field(
                     ui,
@@ -137,7 +136,7 @@ impl SiloApp {
                     {
                         self.save_keycard_copy();
                     }
-                    let device_ready = self.selected_udid.is_some();
+                    let device_ready = self.selected_transport_available();
                     if widgets::button(
                         ui,
                         language.text("Send to iPhone"),
@@ -213,13 +212,11 @@ impl SiloApp {
             .clone()
             .unwrap_or_else(|| crate::paths::app_data_dir().join("keycards"));
         let stem = sanitize_stem(&self.keycard.draft.house_name);
-        match crate::keycard::build_pkpass(
-            &self.keycard.draft,
-            &self.keycard.signing,
-            &dir,
-            &stem,
-        ) {
+        match crate::keycard::build_pkpass(&self.keycard.draft, &self.keycard.signing, &dir, &stem)
+        {
             Ok((path, signed)) => {
+                // A new bundle invalidates the old LAN share link.
+                self.keycard_server = None;
                 self.keycard_status = if signed {
                     format!("Signed keycard saved to {}", path.display())
                 } else {
@@ -259,6 +256,7 @@ impl SiloApp {
                 }
                 Err(err) => {
                     self.keycard_status = format!("Failed to save keycard: {err}");
+                    self.add_log(self.keycard_status.clone());
                 }
             }
         }
@@ -269,7 +267,10 @@ impl SiloApp {
             return;
         };
         let Some(udid) = self.selected_udid.clone() else {
-            self.keycard_status = self.language.text("Connect an iPhone to get started.").to_string();
+            self.keycard_status = self
+                .language
+                .text("Connect an iPhone to get started.")
+                .to_string();
             return;
         };
         let file_name = source
@@ -320,6 +321,18 @@ fn text_field(ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str) {
     ui.add_space(10.0);
 }
 
+/// Like `text_field`, but masks the value (certificate passwords).
+fn password_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
+    widgets::section_header(ui, &label.to_uppercase());
+    ui.add_space(4.0);
+    ui.add(
+        egui::TextEdit::singleline(value)
+            .password(true)
+            .desired_width(f32::INFINITY),
+    );
+    ui.add_space(10.0);
+}
+
 fn color_row(ui: &mut egui::Ui, label: &str, value: &mut [u8; 3]) {
     ui.horizontal(|ui| {
         widgets::caption(ui, label);
@@ -365,11 +378,7 @@ fn image_row(
     ui.add_space(10.0);
 }
 
-fn p12_row(
-    ui: &mut egui::Ui,
-    language: Language,
-    path: &mut Option<std::path::PathBuf>,
-) {
+fn p12_row(ui: &mut egui::Ui, language: Language, path: &mut Option<std::path::PathBuf>) {
     widgets::section_header(ui, &language.text("Certificate (.p12)").to_uppercase());
     ui.add_space(4.0);
     ui.horizontal(|ui| {
@@ -380,7 +389,7 @@ fn p12_row(
         widgets::caption(ui, &current);
         if widgets::button(
             ui,
-            language.text("Choose image"),
+            language.text("Choose .p12..."),
             ButtonKind::Secondary,
             true,
             false,
@@ -391,6 +400,11 @@ fn p12_row(
                 .pick_file()
         {
             *path = Some(picked);
+        }
+        if path.is_some()
+            && widgets::button(ui, language.text("Clear"), ButtonKind::Quiet, true, false).clicked()
+        {
+            *path = None;
         }
     });
     ui.add_space(10.0);
@@ -412,7 +426,7 @@ fn cert_row(
         widgets::caption(ui, &current);
         if widgets::button(
             ui,
-            language.text("Choose image"),
+            language.text("Choose certificate..."),
             ButtonKind::Secondary,
             true,
             false,
@@ -424,21 +438,33 @@ fn cert_row(
         {
             *path = Some(picked);
         }
+        if path.is_some()
+            && widgets::button(ui, language.text("Clear"), ButtonKind::Quiet, true, false).clicked()
+        {
+            *path = None;
+        }
     });
     ui.add_space(10.0);
 }
 
 fn preview(ui: &mut egui::Ui, draft: &KeycardDraft) {
     let width = ui.available_width().clamp(220.0, 340.0);
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(width, width * 0.62), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, width * 0.62), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(
         rect,
         egui::CornerRadius::same(18),
-        egui::Color32::from_rgb(draft.background[0], draft.background[1], draft.background[2]),
+        egui::Color32::from_rgb(
+            draft.background[0],
+            draft.background[1],
+            draft.background[2],
+        ),
     );
-    let fg = egui::Color32::from_rgb(draft.foreground[0], draft.foreground[1], draft.foreground[2]);
+    let fg = egui::Color32::from_rgb(
+        draft.foreground[0],
+        draft.foreground[1],
+        draft.foreground[2],
+    );
     let label = egui::Color32::from_rgb(
         draft.label_color[0],
         draft.label_color[1],
@@ -470,7 +496,11 @@ fn preview(ui: &mut egui::Ui, draft: &KeycardDraft) {
         painter.text(
             egui::pos2(left, y + 14.0),
             egui::Align2::LEFT_TOP,
-            if value.trim().is_empty() { "—" } else { value },
+            if value.trim().is_empty() {
+                "—"
+            } else {
+                value
+            },
             egui::FontId::proportional(15.0),
             fg,
         );
@@ -489,14 +519,55 @@ fn preview(ui: &mut egui::Ui, draft: &KeycardDraft) {
 }
 
 fn sanitize_stem(name: &str) -> String {
-    let stem: String = name
+    // Keep letters/digits from any script, but make the result safe to use as
+    // a Windows file name: no separators or reserved characters, no trailing
+    // dots/spaces, and no device names such as CON or NUL.
+    let mut stem: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let stem = stem.trim_matches('-').to_string();
+    while stem.contains("--") {
+        stem = stem.replace("--", "-");
+    }
+    let mut stem = stem.trim_matches('-').trim().to_string();
     if stem.is_empty() {
-        "keycard".to_string()
+        return "keycard".to_string();
+    }
+    stem = stem.chars().take(64).collect();
+    stem = stem.trim_end_matches(['.', ' ', '-']).to_string();
+    if stem.is_empty() {
+        return "keycard".to_string();
+    }
+
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&stem.to_ascii_uppercase().as_str()) {
+        format!("keycard-{stem}")
     } else {
         stem
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_stem;
+
+    #[test]
+    fn sanitize_stem_produces_safe_file_names() {
+        assert_eq!(sanitize_stem("My House"), "My-House");
+        assert_eq!(sanitize_stem("  Front/Door  "), "Front-Door");
+        assert_eq!(sanitize_stem("Café ☕"), "Café");
+        assert_eq!(sanitize_stem("..."), "keycard");
+        assert_eq!(sanitize_stem("CON"), "keycard-CON");
+        assert_eq!(sanitize_stem("nul.pass"), "nul-pass");
+        assert!(sanitize_stem(&"a".repeat(200)).len() <= 64);
     }
 }

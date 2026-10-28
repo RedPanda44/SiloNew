@@ -8,6 +8,11 @@ use regex::Regex;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
+/// Default target cache when the user has not chosen one explicitly.
+pub const DEFAULT_TELEPHONY_VERSION: &str = "Auto (TelephonyUI-10)";
+/// Default keypad subtext language.
+pub const DEFAULT_KEYPAD_LANGUAGE: &str = "English";
+
 pub const KEYPAD_SUBTEXTS_EN: &[(&str, &str)] = &[
     ("0", "+"),
     ("1", ""),
@@ -157,12 +162,11 @@ pub fn parse_passthm_file(
             }
         }
 
-        if digit.is_none() {
-            if let Some(caps) = simple_digit_re.captures(&leaf) {
-                if let Some(d) = caps.get(1) {
-                    digit = Some(d.as_str().to_string());
-                }
-            }
+        if digit.is_none()
+            && let Some(caps) = simple_digit_re.captures(&leaf)
+            && let Some(d) = caps.get(1)
+        {
+            digit = Some(d.as_str().to_string());
         }
 
         if let Some(d) = digit {
@@ -246,11 +250,11 @@ pub fn parse_passthm_file(
                 }
             }
 
-            if let Some(ref s) = subtext {
-                if !s.is_empty() {
-                    for p in &["en", "other", "ru", "uk", "ja"] {
-                        add_variant(p, s);
-                    }
+            if let Some(ref s) = subtext
+                && !s.is_empty()
+            {
+                for p in &["en", "other", "ru", "uk", "ja"] {
+                    add_variant(p, s);
                 }
             }
         }

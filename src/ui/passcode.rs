@@ -113,6 +113,7 @@ impl SiloApp {
                             .clicked();
                     });
                 if ver_changed {
+                    self.persist_settings();
                     if let Some(path) = self.theme_path.clone() {
                         self.load_theme_from_path(ctx, &path);
                     }
@@ -175,6 +176,7 @@ impl SiloApp {
                             .clicked();
                     });
                 if lang_changed {
+                    self.persist_settings();
                     if let Some(path) = self.theme_path.clone() {
                         self.load_theme_from_path(ctx, &path);
                     }
@@ -204,6 +206,7 @@ impl SiloApp {
                     language.text("Generates *-bold.png for devices with Bold Text turned ON in iPhone Settings -> Display"),
                 );
                 if bold_changed {
+                    self.persist_settings();
                     if let Some(path) = self.theme_path.clone() {
                         self.load_theme_from_path(ctx, &path);
                     }
@@ -217,6 +220,7 @@ impl SiloApp {
                 ui.add_space(6.0);
 
                 let can_flash = !self.is_busy
+                    && !self.scanning_syslog
                     && self.selected_transport_available()
                     && self.loaded_theme.is_some();
                 let resp = widgets::button(

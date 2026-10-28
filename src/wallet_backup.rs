@@ -61,14 +61,32 @@ pub fn backup_exists(udid: &str, card_hash: &str) -> bool {
 }
 
 fn card_hash_candidates(card_hash: &str) -> Vec<String> {
-    let trimmed = card_hash.trim_end_matches('=');
-    let mut candidates = vec![card_hash.to_string(), trimmed.to_string()];
-    if !trimmed.is_empty() {
-        candidates.push(format!("{trimmed}="));
-        candidates.push(format!("{trimmed}=="));
+    let trimmed = card_hash.trim().trim_end_matches('=');
+    if !is_safe_card_hash_component(trimmed) {
+        return Vec::new();
     }
-    candidates.dedup();
+    let mut candidates = vec![
+        card_hash.trim().to_string(),
+        trimmed.to_string(),
+        format!("{trimmed}="),
+        format!("{trimmed}=="),
+    ];
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| {
+        is_safe_card_hash_component(candidate) && seen.insert(candidate.clone())
+    });
     candidates
+}
+
+/// A card hash is interpolated into a device path, so reject anything that
+/// could escape the Cards directory.
+fn is_safe_card_hash_component(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('.')
+        && !value.contains('\\')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '-' | '_' | '='))
 }
 
 fn find_device_card_hash(afc: &AfcClient, card_hash: &str) -> Result<Option<String>> {
@@ -103,7 +121,11 @@ pub fn load_current_card_artwork(
     eprintln!(
         "[dbg] load_current_card_artwork udid={udid} mode={connection_mode:?} hash={card_hash}"
     );
-    for candidate in card_hash_candidates(card_hash) {
+    let candidates = card_hash_candidates(card_hash);
+    if candidates.is_empty() {
+        bail!("'{}' is not a valid Wallet card hash", card_hash.trim());
+    }
+    for candidate in candidates {
         let card_dir = format!("/var/mobile/Library/Passes/Cards/{candidate}.pkpass");
         for asset in [
             "cardBackgroundCombined@3x.png",
@@ -169,7 +191,10 @@ where
                     found_any = true;
                 }
                 Err(_) => {
-                    log(&format!("Original card asset not present on device: {}", asset));
+                    log(&format!(
+                        "Original card asset not present on device: {}",
+                        asset
+                    ));
                 }
             }
         }
@@ -222,13 +247,8 @@ pub fn load_original_assets(udid: &str, card_hash: &str) -> Result<Vec<(String, 
 }
 
 fn write_backup_file(path: &Path, data: &[u8]) -> Result<()> {
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, data)?;
-    if path.exists() {
-        fs::remove_file(path)?;
-    }
-    fs::rename(temporary, path)?;
-    Ok(())
+    crate::paths::write_atomic(path, data)
+        .with_context(|| format!("Could not write backup file {}", path.display()))
 }
 
 /// Diagnostic: stage a standard (production-shaped) archive and report where it
@@ -344,7 +364,9 @@ pub fn diagnose_cleanup() -> Result<String> {
         .context("Failed to open device session")?;
     let afc = AfcClient::new(&session).context("Failed to open AFC")?;
 
-    let entries = afc.list_directory(".").context("Failed to list Media root")?;
+    let entries = afc
+        .list_directory(".")
+        .context("Failed to list Media root")?;
     for entry in entries {
         if !entry.starts_with("airlift-") {
             continue;
@@ -355,7 +377,11 @@ pub fn diagnose_cleanup() -> Result<String> {
         }
         out.push_str(&format!(
             "{entry}: {}\n",
-            if afc.exists(&entry) { "STILL PRESENT" } else { "removed" }
+            if afc.exists(&entry) {
+                "STILL PRESENT"
+            } else {
+                "removed"
+            }
         ));
     }
     Ok(out)
@@ -606,7 +632,10 @@ pub fn diagnose_cards(card_hash: Option<&str>) -> Result<String> {
     eprintln!("[dbg] opening device session...");
     let session = ActiveDeviceSession::open(None, ConnectionMode::Auto)
         .context("Failed to open device session")?;
-    eprintln!("[dbg] session open (udid={} transport={:?})", session.udid, session.transport);
+    eprintln!(
+        "[dbg] session open (udid={} transport={:?})",
+        session.udid, session.transport
+    );
     eprintln!("[dbg] opening AFC...");
     let afc = AfcClient::new(&session).context("Failed to open AFC")?;
     eprintln!("[dbg] AFC open");

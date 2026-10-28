@@ -11,6 +11,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -54,7 +55,13 @@ impl Default for KeycardDraft {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SigningPrefs {
     pub p12_path: Option<PathBuf>,
-    #[serde(default)]
+    /// Certificate password, encrypted at rest with Windows DPAPI while it is
+    /// stored in `settings.json`. Legacy plain-text values are still read.
+    #[serde(
+        default,
+        serialize_with = "serialize_password",
+        deserialize_with = "deserialize_password"
+    )]
     pub p12_password: String,
     pub cert_pem: Option<PathBuf>,
     pub key_pem: Option<PathBuf>,
@@ -68,12 +75,186 @@ pub struct SigningPrefs {
 impl SigningPrefs {
     /// True when enough material is present to attempt signing.
     pub fn is_configured(&self) -> bool {
-        let has_cert = self.p12_path.is_some()
-            || (self.cert_pem.is_some() && self.key_pem.is_some());
+        let has_cert =
+            self.p12_path.is_some() || (self.cert_pem.is_some() && self.key_pem.is_some());
         has_cert
             && self.wwdr_path.is_some()
             && !self.pass_type_id.trim().is_empty()
             && !self.team_id.trim().is_empty()
+    }
+}
+
+/// Marker prefix for DPAPI-protected values in `settings.json`.
+const DPAPI_PREFIX: &str = "dpapi:";
+
+/// Encrypt `value` for the current Windows user before it is persisted.
+///
+/// If encryption is unavailable the password is *not* written in clear text:
+/// an empty string is stored instead, so the user only has to retype it on the
+/// next launch.
+fn protect_password(value: &str) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+    #[cfg(windows)]
+    {
+        match protection::protect(value) {
+            Some(encoded) => format!("{DPAPI_PREFIX}{encoded}"),
+            None => String::new(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        value.to_string()
+    }
+}
+
+/// Decrypt a stored password, accepting legacy values written in clear text.
+fn unprotect_password(stored: &str) -> String {
+    let Some(encoded) = stored.strip_prefix(DPAPI_PREFIX) else {
+        return stored.to_string();
+    };
+    #[cfg(windows)]
+    {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .ok()
+            .and_then(|blob| protection::unprotect(&blob))
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = encoded;
+        String::new()
+    }
+}
+
+fn serialize_password<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&protect_password(value))
+}
+
+fn deserialize_password<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let stored = String::deserialize(deserializer)?;
+    Ok(unprotect_password(&stored))
+}
+
+/// Per-user DPAPI wrappers (`CryptProtectData` / `CryptUnprotectData`), so the
+/// certificate password on disk is only readable by the same Windows account.
+#[cfg(windows)]
+mod protection {
+    use std::ffi::c_void;
+    use std::ptr;
+
+    use base64::Engine as _;
+
+    #[repr(C)]
+    struct DataBlob {
+        cb_data: u32,
+        pb_data: *mut u8,
+    }
+
+    #[link(name = "crypt32")]
+    unsafe extern "system" {
+        fn CryptProtectData(
+            data_in: *const DataBlob,
+            data_descr: *const u16,
+            entropy: *const DataBlob,
+            reserved: *const c_void,
+            prompt: *const c_void,
+            flags: u32,
+            data_out: *mut DataBlob,
+        ) -> i32;
+        fn CryptUnprotectData(
+            data_in: *const DataBlob,
+            data_descr: *mut *mut u16,
+            entropy: *const DataBlob,
+            reserved: *const c_void,
+            prompt: *const c_void,
+            flags: u32,
+            data_out: *mut DataBlob,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn LocalFree(mem: *mut c_void) -> *mut c_void;
+    }
+
+    /// Never show a UI prompt: the app may be signing in the background.
+    const CRYPTPROTECT_UI_FORBIDDEN: u32 = 0x1;
+
+    /// Returns the protected bytes, base64-encoded, or `None` on failure.
+    pub(super) fn protect(plain: &str) -> Option<String> {
+        let input = DataBlob {
+            cb_data: u32::try_from(plain.len()).ok()?,
+            pb_data: plain.as_ptr().cast_mut(),
+        };
+        let mut output = DataBlob {
+            cb_data: 0,
+            pb_data: ptr::null_mut(),
+        };
+        let ok = unsafe {
+            CryptProtectData(
+                &input,
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        };
+        if ok == 0 || output.pb_data.is_null() {
+            return None;
+        }
+        // Copy before freeing the DPAPI-owned buffer.
+        let bytes = unsafe { std::slice::from_raw_parts(output.pb_data, output.cb_data as usize) };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        unsafe {
+            LocalFree(output.pb_data.cast());
+        }
+        Some(encoded)
+    }
+
+    /// Returns the decrypted plain bytes, or `None` if they cannot be read by
+    /// the current user (for example after copying settings to another PC).
+    pub(super) fn unprotect(blob: &[u8]) -> Option<Vec<u8>> {
+        let input = DataBlob {
+            cb_data: u32::try_from(blob.len()).ok()?,
+            pb_data: blob.as_ptr().cast_mut(),
+        };
+        let mut output = DataBlob {
+            cb_data: 0,
+            pb_data: ptr::null_mut(),
+        };
+        let ok = unsafe {
+            CryptUnprotectData(
+                &input,
+                ptr::null_mut(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        };
+        if ok == 0 || output.pb_data.is_null() {
+            return None;
+        }
+        let bytes =
+            unsafe { std::slice::from_raw_parts(output.pb_data, output.cb_data as usize).to_vec() };
+        unsafe {
+            LocalFree(output.pb_data.cast());
+        }
+        Some(bytes)
     }
 }
 
@@ -149,7 +330,8 @@ pub fn build_pkpass(
             zipw.start_file("signature", opts)?;
             zipw.write_all(sig)?;
         }
-        zipw.finish().context("Failed to finalize the .pkpass archive")?;
+        zipw.finish()
+            .context("Failed to finalize the .pkpass archive")?;
 
         Ok((out_path, signed))
     })();
@@ -196,20 +378,30 @@ impl Drop for PassServer {
 
 pub fn serve_pkpass(local: &Path, file_name: &str) -> Result<PassServer> {
     let body = fs::read(local).context("Failed to read the generated .pkpass")?;
-    let listener = TcpListener::bind(("0.0.0.0", 0)).context("Failed to start the keycard server")?;
+    let listener =
+        TcpListener::bind(("0.0.0.0", 0)).context("Failed to start the keycard server")?;
     let port = listener.local_addr()?.port();
     let ip = local_ipv4().unwrap_or_else(|| "127.0.0.1".to_string());
     let url = format!("http://{ip}:{port}/{file_name}");
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = Arc::clone(&stop);
     let name = file_name.to_string();
+    // Non-blocking accept lets the worker notice `stop()` promptly and drop
+    // the listener, releasing the port even when no iPhone connects again.
+    listener
+        .set_nonblocking(true)
+        .context("Failed to configure the keycard server")?;
     thread::spawn(move || {
-        for stream in listener.incoming() {
-            if stop_thread.load(Ordering::SeqCst) {
-                break;
-            }
-            if let Ok(mut stream) = stream {
-                let _ = serve_connection(&mut stream, &name, &body);
+        while !stop_thread.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                    let _ = serve_connection(&mut stream, &name, &body);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(_) => break,
             }
         }
     });
@@ -351,8 +543,14 @@ fn sign_manifest(
         (cert, key)
     } else {
         (
-            signing.cert_pem.clone().context("Missing Pass Type ID certificate")?,
-            signing.key_pem.clone().context("Missing private key file")?,
+            signing
+                .cert_pem
+                .clone()
+                .context("Missing Pass Type ID certificate")?,
+            signing
+                .key_pem
+                .clone()
+                .context("Missing private key file")?,
         )
     };
     let wwdr = signing
@@ -508,10 +706,7 @@ mod tests {
 
     #[test]
     fn sha1_matches_known_vectors() {
-        assert_eq!(
-            hex(&sha1(b"")),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
+        assert_eq!(hex(&sha1(b"")), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
         assert_eq!(
             hex(&sha1(b"abc")),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
@@ -531,5 +726,75 @@ mod tests {
         assert!(!signed);
         assert!(path.is_file());
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn keycard_server_serves_and_releases_its_port() {
+        let dir = std::env::temp_dir().join("silo-keycard-serve-test");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("unit-test.pkpass");
+        fs::write(&path, b"PK-test").unwrap();
+
+        let server = serve_pkpass(&path, "unit-test.pkpass").unwrap();
+        let port: u16 = server
+            .url
+            .rsplit(':')
+            .next()
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|port| port.parse().ok())
+            .expect("server URL should contain a port");
+
+        {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            stream
+                .write_all(b"GET /unit-test.pkpass HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).unwrap();
+            assert!(response.starts_with(b"HTTP/1.1 200"));
+            assert!(response.ends_with(b"PK-test"));
+        }
+
+        drop(server);
+        std::thread::sleep(Duration::from_millis(400));
+        TcpListener::bind(("127.0.0.1", port))
+            .expect("the keycard server must release its port when stopped");
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_plaintext_password_still_loads() {
+        // Settings written by earlier builds stored the password verbatim.
+        assert_eq!(unprotect_password("hunter2"), "hunter2");
+        assert_eq!(unprotect_password(""), "");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn certificate_password_round_trips_through_dpapi() {
+        let protected = protect_password("s3cret-passphrase");
+        assert!(
+            protected.starts_with(DPAPI_PREFIX),
+            "password should be encrypted before saving"
+        );
+        assert!(!protected.contains("s3cret"), "plain text must not leak");
+        assert_eq!(unprotect_password(&protected), "s3cret-passphrase");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn signing_prefs_serialize_password_encrypted() {
+        let prefs = SigningPrefs {
+            p12_password: "top-secret".to_string(),
+            ..SigningPrefs::default()
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        assert!(
+            !json.contains("top-secret"),
+            "settings.json leaked the password"
+        );
+        let parsed: SigningPrefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.p12_password, "top-secret");
     }
 }

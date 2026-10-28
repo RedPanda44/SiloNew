@@ -27,7 +27,8 @@ impl SiloApp {
                 );
                 widgets::bullet_row(
                     ui,
-                    language.text("- First-time setup: connect by USB and tap \"Trust this Computer\""),
+                    language
+                        .text("- First-time setup: connect by USB and tap \"Trust this Computer\""),
                 );
                 widgets::bullet_row(
                     ui,
@@ -41,11 +42,18 @@ impl SiloApp {
                 ui.add_space(14.0);
                 widgets::hairline(ui);
 
-                widgets::section_header(ui, &language.text("Finding Your Card Hash").to_uppercase());
+                widgets::section_header(
+                    ui,
+                    &language.text("Finding Your Card Hash").to_uppercase(),
+                );
                 ui.add_space(8.0);
                 widgets::step_row(ui, 1, language.text("1. Click \"Scan\" in the Wallet tab"));
                 widgets::step_row(ui, 2, language.text("2. Open Apple Wallet on your iPhone"));
-                widgets::step_row(ui, 3, language.text("3. Tap the card you want to customize"));
+                widgets::step_row(
+                    ui,
+                    3,
+                    language.text("3. Tap the card you want to customize"),
+                );
                 widgets::step_row(
                     ui,
                     4,
@@ -83,7 +91,11 @@ impl SiloApp {
                     3,
                     language.text("3. Force close Apple Wallet by swiping up on it"),
                 );
-                widgets::step_row(ui, 4, language.text("4. Reopen Wallet - your new skin appears!"));
+                widgets::step_row(
+                    ui,
+                    4,
+                    language.text("4. Reopen Wallet - your new skin appears!"),
+                );
 
                 ui.add_space(14.0);
                 widgets::hairline(ui);
